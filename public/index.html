@@ -11,22 +11,25 @@
 <script>
 /* Render connector: gives the game the same room API it uses on claude.ai, backed by this site's own WebSocket server. */
 (function(){if(window.claude)return;
- const peerCbs=[],connCbs=[],topicCbs={};let ws=null,me=null,connected=false,list=[],myPres={},retry=0,flushT=null;const seen=new Map();
+ const peerCbs=[],connCbs=[],topicCbs={},chatCbs=[],authCbs=[],kickCbs=[];let ws=null,me=null,connected=false,list=[],myPres={},retry=0,flushT=null,myAdmin=false,kicked=false;const seen=new Map();
  const url=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
  function setConn(c){if(connected===c)return;connected=c;connCbs.forEach(f=>{try{f(c)}catch(e){console.error(e)}})}
  function deliver(next){const prev=new Map(list.map(p=>[p.peer,p])),nm=new Map(next.map(p=>[p.peer,p]));
   const ch={peers:next,joined:next.filter(p=>!prev.has(p.peer)),left:list.filter(p=>!nm.has(p.peer)),updated:next.filter(p=>prev.has(p.peer)&&prev.get(p.peer).presence!==p.presence)};list=next;
   peerCbs.forEach(f=>{try{f(ch)}catch(e){console.error(e)}})}
- function fromServer(arr){return arr.map(p=>{if(p.peer===me)return{peer:p.peer,sameTab:true,isMe:true,kind:'user',presence:myPres,updatedAt:p.updatedAt};
+ function fromServer(arr){return arr.map(p=>{if(p.peer===me)return{peer:p.peer,sameTab:true,isMe:true,kind:'user',admin:!!p.admin,presence:myPres,updatedAt:p.updatedAt};
   const raw=JSON.stringify(p.presence||{});const old=seen.get(p.peer);let obj;if(old&&old.raw===raw)obj=old.obj;else{obj=Object.freeze(p.presence||{});seen.set(p.peer,{raw,obj})}
-  return{peer:p.peer,sameTab:false,kind:'user',presence:obj,updatedAt:p.updatedAt}})}
+  return{peer:p.peer,sameTab:false,kind:'user',admin:!!p.admin,presence:obj,updatedAt:p.updatedAt}})}
  function connect(){try{ws=new WebSocket(url)}catch(e){setTimeout(connect,2000);return}
   ws.onopen=()=>{retry=0};
   ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data)}catch(e){return}
    if(m.t==='welcome'){me=m.peer;ws.send(JSON.stringify({t:'presence',p:myPres}));setConn(true)}
    else if(m.t==='peers')deliver(fromServer(m.peers||[]));
+   else if(m.t==='authok'){myAdmin=!!m.admin;authCbs.forEach(f=>{try{f(myAdmin)}catch(e){console.error(e)}})}
+   else if(m.t==='chat')chatCbs.forEach(f=>{try{f(m)}catch(e){console.error(e)}})
+   else if(m.t==='kicked')kicked=true;
    else if(m.t==='msg')(topicCbs[m.topic]||[]).forEach(f=>{try{f({topic:m.topic,data:m.data,peer:m.peer,sameTab:false})}catch(e){console.error(e)}})};
-  ws.onclose=()=>{me=null;setConn(false);deliver([]);setTimeout(connect,Math.min(8000,500*Math.pow(2,retry++)))};ws.onerror=()=>{}}
+  ws.onclose=ev=>{me=null;setConn(false);deliver([]);if(kicked){kicked=false;kickCbs.forEach(f=>{try{f(ev.code)}catch(e){console.error(e)}});retry=0;setTimeout(connect,1200);return}setTimeout(connect,Math.min(8000,500*Math.pow(2,retry++)))};ws.onerror=()=>{}}
  function flush(){flushT=null;if(ws&&ws.readyState===1&&me)ws.send(JSON.stringify({t:'presence',p:myPres}))}
  const room={
   presence(patch){const n=Object.assign({},myPres);for(const k in patch){if(patch[k]===null)delete n[k];else n[k]=patch[k]}myPres=n;if(!flushT)flushT=setTimeout(flush,35);return Promise.resolve()},
@@ -34,6 +37,14 @@
   onConnection(f){connCbs.push(f);setTimeout(()=>f(connected),0);return()=>{}},
   on(t,f){(topicCbs[t]=topicCbs[t]||[]).push(f);return()=>{}},
   emit(t,d){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'emit',topic:t,data:d}));return Promise.resolve()},
+  auth(user,pass){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'auth',user:user,pass:pass}));return Promise.resolve()},
+  onAuth(f){authCbs.push(f);setTimeout(()=>f(myAdmin),0);return()=>{}},
+  isAdmin(){return myAdmin},
+  chat(text){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'chat',text:text}))},
+  onChat(f){chatCbs.push(f);return()=>{}},
+  purge(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'purge'}))},
+  kick(peer){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'kick',peer:peer}))},
+  onKick(f){kickCbs.push(f);return()=>{}},
   connected(){return connected},peers(){return list}};
  window.claude={use:async n=>n==='room'?room:null};connect()})();
 </script>
@@ -172,6 +183,11 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 #campTop{position:absolute;left:50%;top:64px;transform:translateX(-50%);padding:10px 16px;text-align:center;font:400 17px "Black Ops One",Impact,sans-serif;z-index:20;display:flex;flex-direction:column;gap:6px;align-items:center}
 .campBtns{position:absolute;right:12px;top:12px;display:flex;gap:8px;z-index:20;align-items:center;flex-wrap:wrap;justify-content:flex-end;max-width:60vw}
 #campWallet{padding:7px 12px;display:flex;align-items:center;gap:6px;font:400 17px "Black Ops One",Impact,sans-serif;color:var(--gold)}#campWallet small{font:600 11px "Chakra Petch",sans-serif;color:var(--muted)}
+#chatToggle{position:absolute;right:12px;bottom:12px;z-index:45}
+#chatBox{position:absolute;right:12px;bottom:12px;width:min(330px,86vw);z-index:46;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+#chatLog{max-height:210px;overflow:auto;display:flex;flex-direction:column;gap:4px;font-size:13px}
+.chatLine{line-height:1.3}.chatLine b{color:var(--gold);margin-right:6px}.chatLine b.adm{color:#e0603a}.chatLine span{word-break:break-word}
+.chatRow{display:flex;gap:6px}.chatRow input{flex:1;min-width:0}
 .shopCard{width:min(640px,100%)!important;position:relative}
 .wallet{display:flex;align-items:center;gap:6px;color:var(--gold);font-weight:700}
 .tabs .tab{background:none;border:0;border-bottom:2px solid transparent;padding:6px 10px;font-weight:700;color:var(--muted)}.tabs .tab.on{color:var(--text);border-color:var(--accent)}
@@ -217,11 +233,26 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 
 
   <div id="campHud" hidden>
-    <div class="card" id="campInfo"><div class="hd">Survivors in camp</div><div id="campPlayers" class="campList"></div>
-      <div class="hd" style="margin-top:8px">Difficulty</div><select class="field" id="campDiff" aria-label="Difficulty"></select></div>
     <div class="card" id="campTop"><div id="campStatus">Stand on a launch pad together to deploy</div><button class="btn go" id="campJoin" hidden>Join the running match</button></div>
-    <div class="campBtns"><div class="card" id="campWallet"><span class="coinic"></span><span id="campScrap">0</span><small>coins</small></div><button class="btn" id="campSettings">Settings</button></div>
+    <div class="campBtns"><div class="card" id="campWallet"><span class="coinic"></span><span id="campScrap">0</span><small>coins</small></div><button class="btn" id="campPanelBtn">Party</button><button class="btn" id="campSettings">Settings</button></div>
   </div>
+  <div class="modal" id="padPop" hidden><div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center"><h2 id="padTitle">Deploy zone</h2><span class="muted" id="padWho"></span></div>
+    <div class="muted" id="padNote"></div>
+    <div class="row" style="gap:10px"><div style="flex:1"><div class="hd">Players</div><select class="field" id="padMax"></select></div><div style="flex:1"><div class="hd">Difficulty</div><select class="field" id="padDiff"></select></div></div>
+    <div><div class="hd">Parties on this pad</div><div id="padRooms" class="campList"></div></div>
+    <div class="row" style="gap:8px"><button class="btn primary" id="padOpen">Open party here</button><button class="btn primary" id="padArm" hidden>Launch now</button><button class="btn go" id="padJoin" hidden>Join the match</button><button class="btn" id="padLeave" hidden>Leave party <kbd>L</kbd></button><button class="btn" id="padClose">Continue</button></div>
+  </div></div>
+  <div class="modal" id="campPanel" hidden><div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center"><h2>Camp</h2><div class="row" style="gap:8px"><span class="coinic"></span><b id="campScrap2">0</b><button class="btn" id="campPanelClose">Close</button></div></div>
+    <div id="campOnline" class="muted">Connecting…</div>
+    <div><div class="hd">Your party</div><div id="campPlayers" class="campList"></div></div>
+    <div><div class="hd">Parties at this camp</div><div id="campRooms" class="campList"></div></div>
+    <div id="campAdm"></div>
+    <div class="row" style="gap:8px"><button class="btn" id="campLeave" hidden>Leave party <kbd>L</kbd></button><button class="btn" id="campLobby">Lobby</button></div>
+  </div></div>
+  <button class="btn" id="chatToggle" hidden>Chat <kbd>T</kbd></button>
+  <div id="chatBox" hidden><div id="chatLog"></div><div class="chatRow"><input class="field" id="chatIn" maxlength="160" placeholder="Message your room…" autocomplete="off" spellcheck="false"><button class="btn primary" id="chatSend">Send</button></div></div>
   <div class="modal" id="shop" hidden><div class="card shopCard">
     <div class="row" style="justify-content:space-between"><h2>Armory</h2><span class="wallet"><span class="coinic"></span><b id="shopScrap">0</b> coins</span></div>
     <div class="row tabs"><button class="tab on" data-tab="locker">Sentries &amp; gear</button><button class="btn" id="shopClose" style="margin-left:auto">Close <kbd>Esc</kbd></button></div>
@@ -234,6 +265,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     <button class="btn" id="mSettings">Settings</button>
     <button class="btn" id="mTutorial">Replay tutorial</button>
     <button class="btn danger" id="mLobby">Return to lobby</button>
+    <div id="admMenu" class="row" style="gap:8px;flex-wrap:wrap" hidden><button class="btn" id="mSkip">Skip wave</button><button class="btn" id="mEnd">End match</button><button class="btn danger" id="mPurge">Purge chat</button></div>
   </div></div>
   <div class="modal" id="settings" hidden><div class="card" id="setCard"></div></div>
   <div class="modal" id="endScreen" hidden><div class="card">
@@ -314,10 +346,11 @@ let Prof=Object.assign({name:'',color:COLORS[Math.floor(Math.random()*COLORS.len
 if(validateName(Prof.name))Prof.name='';
 let settings=Object.assign({sens:1,dist:7,quality:'high',invert:false},store.get('settings',{}));
 const saveProf=()=>store.set('prof',Prof),saveSettings=()=>store.set('settings',settings);
+let prefs=Object.assign({cap:6,df:'normal'},store.get('prefs',{}));const savePrefs=()=>store.set('prefs',prefs);
 
 /* ============ state ============ */
-const S={room:null,myPeer:'local',peers:[],connected:false,view:'lobby',rm:null,rdy:false,lastPres:0,capsReady:false,leftGid:-1,lostSince:0,panel:null};
-const MAXP=8;
+const S={room:null,myPeer:'local',peers:[],connected:false,view:'lobby',rm:null,rdy:false,lastPres:0,capsReady:false,leftGid:-1,lostSince:0,panel:null,admin:false,chat:[],spectate:null,fly:false,pendingPass:false};
+const MAXP=6;
 
 /* ============ presence & network ============ */
 const others=()=>S.peers.filter(p=>!p.sameTab&&p.kind!=='agent');
@@ -326,7 +359,7 @@ function myPresence(){if(!Prof.name)return{n:null};
  const p={n:Prof.name,c:Prof.color,rm:S.rm?S.rm.id:null,rdy:S.rdy?1:0,vw:S.view};
  p.eq=eqStr();if(S.view==='camp')p.pd=S.pad||null;
  if(S.view==='game'||S.view==='camp'){p.x=+PL.x.toFixed(2);p.z=+PL.z.toFixed(2);p.y=+PL.y.toFixed(2);p.r=+PL.face.toFixed(2);p.mv=PL.moving>.5?1:0}
- if(S.rm&&S.rm.isHost){p.hr={id:S.rm.id,code:S.rm.code,pub:S.rm.pub?1:0,st:S.rm.st,max:MAXP,gid:S.rm.gid,df:S.rm.df||'normal',map:S.rm.map||null,lc:S.rm.lc||null};if(S.rm.st==='play'&&H){p.gs=snapshot();let js=JSON.stringify(p);if(js.length>3800){p.gs.t=p.gs.t.map(t=>t?[t[0],t[1],t[2],t[3],'',t[5],t[6],t[7],t[8]]:0);p.gs.e=p.gs.e.map(e=>[e[0],e[1],Math.round(e[2]*10)/10,e[3],e[4],e[5]]);js=JSON.stringify(p)}while(js.length>3800&&p.gs.e.length){p.gs.e=p.gs.e.slice(0,Math.floor(p.gs.e.length*.85));js=JSON.stringify(p)}}}
+ if(S.rm&&S.rm.isHost){p.hr={id:S.rm.id,code:S.rm.code,pub:S.rm.pub?1:0,st:S.rm.st,max:S.rm.max||MAXP,gid:S.rm.gid,df:S.rm.df||'normal',map:S.rm.map||null,lc:S.rm.lc||null,ar:S.rm.armed?1:0};if(S.rm.st==='play'&&H){p.gs=snapshot();let js=JSON.stringify(p);if(js.length>3800){p.gs.t=p.gs.t.map(t=>t?[t[0],t[1],t[2],t[3],'',t[5],t[6],t[7],t[8]]:0);p.gs.e=p.gs.e.map(e=>[e[0],e[1],Math.round(e[2]*10)/10,e[3],e[4],e[5]]);js=JSON.stringify(p)}while(js.length>3800&&p.gs.e.length){p.gs.e=p.gs.e.slice(0,Math.floor(p.gs.e.length*.85));js=JSON.stringify(p)}}}
  return p}
 function pushPresence(force){if(!S.room)return;const t=performance.now();if(!force&&t-S.lastPres<90)return;S.lastPres=t;
  S.room.presence(Object.assign({n:null,c:null,rm:null,rdy:null,vw:null,x:null,z:null,y:null,r:null,mv:null,hr:null,gs:null,pd:null,eq:null},myPresence())).catch(()=>{})}
@@ -341,50 +374,98 @@ async function initCaps(){
   room.onPeers(ch=>{S.peers=ch.peers;const me=ch.peers.find(p=>p.sameTab);if(me&&S.myPeer!==me.peer){const old=S.myPeer;S.myPeer=me.peer;if(S.rm&&S.rm.hostPeer===old)S.rm.hostPeer=me.peer}
    if(S.rm&&S.rm.isHost)for(const p of ch.left)if(p.presence&&p.presence.rm===S.rm.id&&p.presence.n)toast(String(p.presence.n)+' left the room');
    lobbyDirty=true},e=>{S.roomErr=(e&&e.code)||'error';S.connected=false;lobbyDirty=true;if(S.view==='lobby')renderLobby()});
-  room.on('req',m=>{const fn=handlers.req;if(fn)fn(m)},e=>{S.roomErr=(e&&e.code)||'error';S.connected=false;lobbyDirty=true;if(S.view==='lobby')renderLobby()});pushPresence(true)}
+  room.on('req',m=>{const fn=handlers.req;if(fn)fn(m)},e=>{S.roomErr=(e&&e.code)||'error';S.connected=false;lobbyDirty=true;if(S.view==='lobby')renderLobby()});pushPresence(true);
+  if(room.onAuth)room.onAuth(on=>{const was=!!S.admin;S.admin=!!on;if(S.admin){applyAdmin();renderLobby.editName=false;S.pendingPass=false}
+   if(!on&&authTried){authTried=false;toast('Wrong admin password.');lobbyDirty=true;renderLobby();return}
+   if(on)authTried=false;
+   if(S.admin!==was){toast(S.admin?'Admin powers unlocked.':'Admin mode off.');lobbyDirty=true;if(S.view==='camp')campHudLast=0;if(S.view==='lobby')renderLobby()}});
+  if(room.onChat)room.onChat(m=>chatIn(m));
+  if(room.onKick)room.onKick(()=>{S.rm=null;S.rdy=false;H=null;S.spectate=null;S.fly=false;chatOpen=false;$('#chatBox').hidden=true;toast('You were kicked from that party.');if(S.view==='game')exitGame(null);else{pushPresence(true);campHudLast=0}
+   if(S.view==='lobby'){$('#chatToggle').hidden=true;exitCamp()}})}
  renderLobby()}
 
-/* ============ rooms ============ */
+/* ============ deploy parties: opened on a launch pad in the main camp ============ */
 function needName(){if(!Prof.name){toast('Choose a username first.');const i=$('#nameIn');if(i)i.focus();return true}return false}
-function createRoom(pub){if(needName())return;S.rm={id:genId(),code:genCode(),pub:!!pub,isHost:true,hostPeer:S.myPeer,st:'lobby',gid:0,df:'normal'};S.rdy=true;pushPresence(true);enterCamp()}
-function joinByCode(code){if(needName())return;code=String(code||'').trim().toUpperCase();if(code.length<5){lobbyErr='Enter the 5-character room code.';renderLobby();return}
- const r=hostedRooms().find(x=>x.hr.code===code);if(!r){lobbyErr=S.room?'No open room uses code '+code+'.':'You are offline, so there are no other rooms to join.';renderLobby();return}joinRoom(r)}
-function joinRoom(r){if(r.count>=(r.hr.max||MAXP)){lobbyErr='That room is full.';renderLobby();return}
- S.rm={id:r.hr.id,code:r.hr.code,pub:!!r.hr.pub,isHost:false,hostPeer:r.peer,st:r.hr.st,gid:r.hr.gid,df:r.hr.df||'normal'};S.rdy=false;lobbyErr='';pushPresence(true);enterCamp();toast('Joined the survivor camp')}
-let ajAt=0,ajForce=false;
-function autoCamp(){if(S.rm||!Prof.name||renderLobby.editName||S.view!=='lobby')return;if(!ajAt){ajAt=now();lobbyDirty=true;return}const waited=now()-ajAt;
- if(!ajForce&&!(S.capsReady&&(S.roomErr||!S.room||(S.connected&&waited>1500)||waited>4500))){if(waited>6000&&!$('#campNow'))lobbyDirty=true;return}ajAt=0;ajForce=false;
- const r=hostedRooms().filter(x=>x.hr.pub&&x.count<(x.hr.max||MAXP)).sort((a,b)=>b.count-a.count||(a.peer<b.peer?-1:1))[0];if(r)joinRoom(r);else createRoom(true)}
-function quickMatch(){if(needName())return;const r=hostedRooms().filter(x=>x.hr.pub&&x.count<(x.hr.max||MAXP)).sort((a,b)=>b.count-a.count)[0];if(r)joinRoom(r);else{createRoom(true);toast('No public rooms open, so you are hosting one. Others can find it with Quick match.')}}
-function leaveRoom(){if(S.view==='game')exitGame(null);if(S.rm&&S.rm.isHost){S.rm.st='closed';pushPresence(true)}S.rm=null;S.rdy=false;H=null;pushPresence(true);exitCamp()}
+function openParty(pad){if(needName())return;pad=pad||S.pad;if(!pad){toast('Stand on a launch pad first, then open your party there.');return}
+ S.chat=[];renderChat();S.rm={id:genId(),code:genCode(),pub:1,isHost:true,hostPeer:S.myPeer,armed:false,st:'lobby',gid:0,df:prefs.df||'normal',max:clamp(+prefs.cap||MAXP,1,MAXP),map:pad,madeAt:now()};
+ S.rdy=true;pushPresence(true);campHudLast=0;toast('Party open on '+MAPS[pad].name+' · code '+S.rm.code)}
+function joinParty(r){if(needName())return;if(!S.admin&&r.count>=(r.hr.max||MAXP)){toast('That party is full.');return}
+ S.chat=[];renderChat();S.rm={id:r.hr.id,code:r.hr.code,pub:!!r.hr.pub,isHost:false,hostPeer:r.peer,st:r.hr.st,gid:r.hr.gid,df:r.hr.df||'normal',max:r.hr.max||MAXP,map:r.hr.map||null,madeAt:now()};
+ S.rdy=true;pushPresence(true);campHudLast=0;toast('Joined '+r.name+"'s party on "+(MAPS[r.hr.map]?MAPS[r.hr.map].name:'that pad'))}
+function leaveParty(){const wasHost=!!(S.rm&&S.rm.isHost);if(wasHost)S.rm.st='closed';if(S.view==='game')exitGame(null);
+ S.rm=null;S.rdy=false;H=null;S.chat=[];renderChat();pushPresence(true);campHudLast=0;toast(wasHost?'Your party is closed.':'You left the party.')}
 function allReady(){return roomMembers().every(m=>m.me||m.presence.rdy)}
 function startGame(map){const r=S.rm;if(!r||!r.isHost)return;r.map=map||r.map||'outpost';r.lc=null;r.gid++;r.st='play';initGame();pushPresence(true);enterGame()}
 handlers.req=m=>{const d=m.data||{};if(!S.rm||!S.rm.isHost||d.rm!==S.rm.id)return;if(!m.sameTab){const p=peerById(m.peer);if(!p||!p.presence||p.presence.rm!==S.rm.id)return}hostAction(m.sameTab?S.myPeer:m.peer,d)};
 function request(a,extra){const d=Object.assign({rm:S.rm&&S.rm.id,a},extra||{});if(S.rm&&S.rm.isHost)hostAction(S.myPeer,d);else send('req',d)}
+function isAdminPeer(peer){return peer===S.myPeer?!!S.admin:!!((peerById(peer)||{}).admin)}
+function applyAdmin(){
+ if(!S.admin)return;
+ Prof.coins=Math.max(Prof.coins||0,999999);
+ Prof.scrap=Math.max(Prof.scrap||0,999999);
+ Prof.inv=Array.isArray(Prof.inv)?Prof.inv:[];
+ for(const c in GEAR)for(const k in GEAR[c]){const id=c+':'+k;if(!Prof.inv.includes(id))Prof.inv.push(id)}
+ Prof.sentries=Prof.sentries||{};
+ for(const k of TKEYS)Prof.sentries[k]=Math.max(Prof.sentries[k]||0,MAX_COPIES);
+ saveProf();
+ if(PL.avatar)rebuildMyAvatar();
+ if(H&&H.st==='play')H.gold=Math.max(H.gold||0,999999);
+ campHudLast=0;lobbyDirty=true}
 
-let wdLast=0;function watchdog(){const t=performance.now();if(t-wdLast<250)return;wdLast=t;autoCamp();
+/* chat */
+const CHAT_BAD=['fuck','shit','bitch','cunt','asshole','bastard','dick','pussy','slut','whore','nigger','nigga','faggot','retard'];
+function censorChat(s){let out=String(s||'');for(const w of CHAT_BAD)out=out.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),m=>m[0]+'*'.repeat(Math.max(0,m.length-2))+(m.length>1?m[m.length-1]:''));return out}
+let chatOpen=false,chatHold=[],authTried=false;
+function chatIn(m){if(!m)return;
+ if(m.purge){S.chat=[];renderChat();toast('Chat cleared by an admin.');return}
+ const row={name:String(m.name||'Survivor').slice(0,16),text:censorChat(String(m.text||'')).slice(0,160),admin:!!m.admin,at:+m.at||now()};
+ if(!row.text)return;
+ S.chat.push(row);if(S.chat.length>60)S.chat.shift();
+ renderChat();if(!chatOpen)toast(row.name+': '+row.text,3200)}
+function renderChat(){const el=$('#chatLog');if(!el)return;el.replaceChildren(...S.chat.slice(-40).map(r=>h('div',{class:'chatLine'},h('b',{class:r.admin?'adm':'',text:r.name}),h('span',{text:r.text}))));el.scrollTop=el.scrollHeight}
+function openChat(){if(!Prof.name||!(S.view==='camp'||S.view==='game'))return;chatOpen=true;$('#chatBox').hidden=false;$('#chatToggle').hidden=true;renderChat();if(document.pointerLockElement)document.exitPointerLock();setTimeout(()=>{const i=$('#chatIn');if(i)i.focus()},0)}
+function closeChat(){chatOpen=false;$('#chatBox').hidden=true;$('#chatToggle').hidden=!(S.view==='camp'||S.view==='game');const i=$('#chatIn');if(i)i.blur();if(S.view==='game'&&!S.panel)lockPointer()}
+function sendChat(){const i=$('#chatIn');if(!i)return;const raw=i.value.replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,160);i.value='';
+ if(!raw){closeChat();return}
+ const t=performance.now();chatHold=chatHold.filter(x=>t-x<3000);if(chatHold.length>=5){toast('Slow down a little.');return}chatHold.push(t);
+ if(S.room){S.room.chat(raw);chatIn({name:Prof.name||'Survivor',text:raw,admin:S.admin,at:Date.now()})}else chatIn({name:Prof.name||'Survivor',text:raw,admin:S.admin,at:now()});
+ closeChat()}
+
+let wdLast=0;function watchdog(){const t=performance.now();if(t-wdLast<250)return;wdLast=t;
  if(lobbyDirty&&S.view==='lobby'){lobbyDirty=false;renderLobby()}
  const r=S.rm;if(!r||r.isHost||!S.room)return;const hp=peerById(r.hostPeer);const hr=hp&&hp.presence&&hp.presence.hr;
- if(!hr||hr.id!==r.id||hr.st==='closed'){if(!S.lostSince)S.lostSince=now();else if(now()-S.lostSince>3500){S.lostSince=0;if(S.view==='game')exitGame(null);S.rm=null;S.rdy=false;pushPresence(true);toast('The host closed the room.');exitCamp()}return}
- S.lostSince=0;r.st=hr.st;r.gid=hr.gid;r.map=hr.map||r.map;if(hr.df&&hr.df!==r.df){r.df=hr.df;lobbyDirty=true}
+ if(!hr||hr.id!==r.id||hr.st==='closed'){if(!S.lostSince)S.lostSince=now();else if(now()-S.lostSince>3500){S.lostSince=0;if(S.view==='game')exitGame(null);S.rm=null;S.rdy=false;pushPresence(true);campHudLast=0;toast('That party closed. You are back in the main camp.')}return}
+ S.lostSince=0;r.st=hr.st;r.gid=hr.gid;r.map=hr.map||r.map;r.max=hr.max||MAXP;if(hr.df&&hr.df!==r.df){r.df=hr.df;lobbyDirty=true}
  if(hr.st==='play'&&S.view==='camp'&&hr.gid!==S.leftGid&&S.pad&&S.pad===hr.map)enterGame();
  if(hr.st==='lobby'&&S.view==='game'){exitGame('The host returned to the lobby.')}}
 
 /* ============ lobby UI ============ */
 let lobbyErr='',lobbyDirty=false;
+function adminUnlockRow(){const pw=h('input',{class:'field',id:'admPass',type:'password',placeholder:'Admin password',autocomplete:'off'});
+ const unlock=()=>{if(!S.room){toast('Connect to the multiplayer server first.');return}authTried=true;S.room.auth('Sapnap',pw.value)};
+ pw.addEventListener('keydown',e=>{if(e.key==='Enter')unlock()});
+ return [h('div',{class:'hd',style:'margin-top:8px',text:'Admin unlock'}),h('div',{class:'row'},h('div',{style:'flex:1'},pw),h('button',{class:'btn primary',onclick:unlock,text:'Unlock'})),h('div',{class:'muted',text:'The Sapnap account is password protected.'})]}
 function renderLobby(){if(S.view!=='lobby')return;const card=$('#lobbyCard');const ae=document.activeElement;if(ae&&card.contains(ae)&&ae.tagName==='INPUT'){lobbyDirty=true;return}
  const online=!!S.room;const parts=[h('div',null,h('div',{class:'title',text:'SAVOUR VIH'}),h('div',{class:'subtitle',text:'ZOMBIE DEFENSE · CO-OP SURVIVAL'})),
   h('div',{class:'status'+(online&&S.connected?'':' off')},h('i'),online?(S.connected?others().filter(p=>p.presence&&p.presence.n).length+1+' online':'Connecting…'):'Offline: solo play only. Multiplayer needs the published page.')];
+ const needsUnlock=!!(Prof.name&&Prof.name.toLowerCase()==='sapnap'&&!S.admin);
  // username
  if(!Prof.name||renderLobby.editName){const inp=h('input',{class:'field',id:'nameIn',maxlength:16,value:Prof.name||'',placeholder:'Choose a username',autocomplete:'off',spellcheck:'false'});const err=h('div',{class:'err'});
-  const save=()=>{const v=inp.value.trim();const e=validateName(v);if(e){err.textContent=e;return}if(others().some(p=>p.presence&&String(p.presence.n||'').toLowerCase()===v.toLowerCase())){err.textContent='Someone online is already using that name.';return}Prof.name=v;saveProf();renderLobby.editName=false;inp.blur();pushPresence(true);renderLobby()};
+  const save=()=>{const v=inp.value.trim();const e=validateName(v);if(e){err.textContent=e;return}if(others().some(p=>p.presence&&String(p.presence.n||'').toLowerCase()===v.toLowerCase())){err.textContent='Someone online is already using that name.';return}
+   if(v.toLowerCase()!=='sapnap'&&S.admin){S.admin=false;if(S.room)S.room.auth('','')}
+   Prof.name=v;saveProf();
+   if(v.toLowerCase()==='sapnap'&&!S.admin){S.pendingPass=true;renderLobby.editName=true;renderLobby();return}
+   renderLobby.editName=false;S.pendingPass=false;inp.blur();pushPresence(true);renderLobby()};
   inp.addEventListener('keydown',e=>{if(e.key==='Enter')save()});
-  parts.push(h('div',{class:'sect',text:'Username'}),h('div',{class:'row'},h('div',{style:'flex:1'},inp),h('button',{class:'btn primary',onclick:save,text:'Save'})),h('div',{class:'muted',text:'3 to 16 characters: letters, numbers, _ . -'}),err)}
+  parts.push(h('div',{class:'sect',text:'Username'}),h('div',{class:'row'},h('div',{style:'flex:1'},inp),h('button',{class:'btn primary',onclick:save,text:'Save'})),h('div',{class:'muted',text:'3 to 16 characters: letters, numbers, _ . -'}),err);
+  if(needsUnlock)parts.push(...adminUnlockRow())}
  else parts.push(h('div',{class:'row'},h('span',{class:'dot',style:'background:'+Prof.color}),h('span',null,'Playing as ',h('b',{text:Prof.name})),h('span',{class:'muted',id:'profStats',text:'· Coins '+(Prof.coins||0)+' · '+(Prof.games||0)+' matches'+(Prof.best&&Object.keys(Prof.best).length?' · best: '+Object.entries(Prof.best).map(([k,v])=>(DIFF[k]?DIFF[k].name:k)+' wave '+v).join(', '):'')}),S.rm?null:h('button',{class:'btn',style:'margin-left:auto;padding:5px 10px',onclick:()=>{renderLobby.editName=true;renderLobby()},text:'Change'})));
+ if(needsUnlock&&Prof.name&&!renderLobby.editName)parts.push(...adminUnlockRow());
  const r=S.rm;
- if(Prof.name&&!renderLobby.editName){parts.push(h('div',{class:'row',style:'gap:10px'},h('span',{class:'spin'}),h('b',{text:!S.capsReady?'Starting up…':(S.room&&!S.connected&&!S.roomErr?'Connecting to the multiplayer server…':'Heading to the survivor camp…')})));
-  if(S.roomErr)parts.push(h('div',{class:'muted',text:'Multiplayer is not available on this view, so you will play in a solo camp.'}));
-  if(ajAt&&now()-ajAt>6000)parts.push(h('button',{class:'btn primary',id:'campNow',onclick:()=>{ajForce=true;S.capsReady=true;autoCamp()},text:'Enter camp now'}))}
+ if(Prof.name&&!renderLobby.editName){parts.push(h('div',{class:'row',style:'gap:10px'},h('span',{class:'spin'}),h('b',{text:!S.capsReady?'Starting up…':(S.room&&!S.connected&&!S.roomErr?'Connecting to the multiplayer server…':'Ready to deploy.')})));
+  if(S.roomErr)parts.push(h('div',{class:'muted',text:'Multiplayer is not reachable from this view, so the camp will hold you alone.'}));
+  if(S.admin)parts.push(h('div',{class:'row'},h('span',{class:'tag host',text:'ADMIN'}),h('span',{class:'muted',text:'Fly F · Spectate V · kick + chat tools'})));
+  parts.push(h('div',{class:'row'},h('button',{class:'btn primary',onclick:()=>enterCamp(),text:'Enter the main camp'})))}
  parts.push(h('div',{class:'row'},h('button',{class:'btn',onclick:openSettings,text:'Settings'}),h('button',{class:'btn',onclick:()=>{startTutorialNext=true;toast('The tutorial will play when your next game starts.')},text:'Replay tutorial'}),null));
  card.replaceChildren(...parts)}
 
@@ -925,44 +1006,141 @@ $('#shopClose').onclick=closeShop;$('#coClose').onclick=()=>$('#crateOpen').hidd
 
 /* ============ camp lobby (3D) ============ */
 S.pad=null;
-function enterCamp(){S.view='camp';$('#lobby').hidden=true;$('#hud').hidden=true;$('#endScreen').hidden=true;$('#menu').hidden=true;$('#campHud').hidden=false;S.panel=null;closeSide&&closeSide();
+function enterCamp(){S.view='camp';$('#lobby').hidden=true;$('#hud').hidden=true;$('#endScreen').hidden=true;$('#menu').hidden=true;$('#campHud').hidden=false;$('#chatToggle').hidden=chatOpen;S.panel=null;padPopPad=null;padPopSeen=null;$('#padPop').hidden=true;$('#campPanel').hidden=true;closeSide&&closeSide();
  loadMap('camp');clearVisuals();resetPlayer();rebuildMyAvatar();pushPresence(true);updateLockHint();campHudLast=0;
- if(!store.get('campHint',false)){store.set('campHint',true);setTimeout(()=>toast('Walk to the Deploy Zone and stand on a launch pad. At the Supply Shop, walk up to a crate and press E to open it.',5500),800)}}
-function exitCamp(){$('#campHud').hidden=true;S.view='lobby';if(document.pointerLockElement)document.exitPointerLock();for(const [,A] of RAV)scene.remove(A.ch.g);RAV.clear();if(PL.avatar){scene.remove(PL.avatar.g);PL.avatar=null}$('#lobby').hidden=false;renderLobby()}
+ if(!store.get('campHint',false)){store.set('campHint',true);setTimeout(()=>toast('Step onto a deploy zone to set up your party. Friends join that same zone, then you all deploy together. At the Supply Shop, press E at a crate to open it.',7000),800)}}
+function exitCamp(){$('#campHud').hidden=true;$('#chatToggle').hidden=true;$('#chatBox').hidden=true;chatOpen=false;padPopPad=null;padPopSeen=null;$('#padPop').hidden=true;$('#campPanel').hidden=true;S.panel=null;S.view='lobby';if(document.pointerLockElement)document.exitPointerLock();for(const [,A] of RAV)scene.remove(A.ch.g);RAV.clear();if(PL.avatar){scene.remove(PL.avatar.g);PL.avatar=null}$('#lobby').hidden=false;renderLobby()}
 function rebuildMyAvatar(){if(PL.avatar){scene.remove(PL.avatar.g);PL.avatar=null}}
 function padOf(x,z){for(const P of LAUNCH)if(Math.hypot(x-P.x,z-P.z)<P.r)return P.id;return null}
-let campHudLast=0;
-function campTick(dt){const r=S.rm;if(!r)return;S.pad=padOf(PL.x,PL.z);
- const mem=roomMembers();const pads=mem.map(m=>m.me?S.pad:(m.presence.pd||null));
- // a host alone in a camp merges into an older open camp so everyone online ends up together
- if(r.isHost&&mem.length===1&&r.st!=='play'&&!r.lc&&S.room){const o=hostedRooms().find(x=>x.hr.pub&&x.peer<S.myPeer&&x.count<(x.hr.max||MAXP)&&x.hr.st!=='closed');if(o){r.st='closed';pushPresence(true);S.rm=null;joinRoom(o);return}}
- // host decides launches
- if(r.isHost&&r.st!=='play'){const all=pads.length&&pads.every(p=>p&&p===pads[0]);
-  if(all){if(!r.lc||r.lc.map!==pads[0]){r.lc={map:pads[0],at:now()+4000};pushPresence(true)}else if(now()>=r.lc.at){r.lc=null;startGame(pads[0])}}
+let campHudLast=0,padPopPad=null,padPopSeen=null,padPopT=0;
+function campTick(dt){S.pad=padOf(PL.x,PL.z);const r=S.rm;
+ const mem=r?roomMembers():[];const pads=r?mem.map(m=>m.me?S.pad:(m.presence.pd||null)):[];
+ const parts=hostedRooms();
+ // the host launches once the party is full or armed and every member stands on the party pad
+ if(r&&r.isHost&&r.st!=='play'){const all=mem.length>0&&pads.every(p=>p===r.map);const go=all&&(r.armed||mem.length>=(r.max||MAXP));
+  if(go){if(!r.lc||r.lc.map!==r.map){r.lc={map:r.map,at:now()+4000};pushPresence(true)}else if(now()>=r.lc.at){r.lc=null;r.armed=false;startGame(r.map)}}
   else if(r.lc){r.lc=null;pushPresence(true)}}
- const lc=r.isHost?r.lc:((peerById(r.hostPeer)||{presence:{}}).presence.hr||{}).lc;
- for(const P of LAUNCH){const n=pads.filter(p=>p===P.id).length;P.ring.material.opacity=n?.95:.45;P.ring.scale.setScalar(n?1+Math.sin(performance.now()/200)*.03:1);
-  setPadLabel(P,lc&&lc.map===P.id?'LAUNCH IN '+Math.max(0,Math.ceil((lc.at-now())/1000)):(n?n+' / '+mem.length+' ready':''),lc&&lc.map===P.id?'#f0b030':'#ece4d4')}
+ const lc=r?(r.isHost?r.lc:((peerById(r.hostPeer)||{presence:{}}).presence.hr||{}).lc):null;
+ for(const P of LAUNCH){const here=parts.filter(x=>x.hr.map===P.id);const mine=r&&r.map===P.id?pads.filter(p=>p===P.id).length:0;
+  P.ring.material.opacity=(mine||here.length)?.95:.45;P.ring.scale.setScalar((mine||here.length)?1+Math.sin(performance.now()/200)*.03:1);
+  setPadLabel(P,lc&&lc.map===P.id?'LAUNCH IN '+Math.max(0,Math.ceil((lc.at-now())/1000)):(here.length?here.map(x=>shortName(x.name)+' '+x.count+'/'+(x.hr.max||MAXP)).join('   '):(S.pad===P.id?'PRESS E HERE':'')),lc&&lc.map===P.id?'#f0b030':(here.length?'#8ab04a':'#ece4d4'))}
+ if(!S.pad){if(padPopPad)closePadPop();padPopSeen=null}
+ else if(padPopPad!==S.pad){if(padPopPad)closePadPop();if(S.pad!==padPopSeen)openPadPop()}
+ else if(padPopPad){padPopT-=dt;if(padPopT<=0){padPopT=.2;renderPadPop()}}
  updateOpen(dt);const pr=$('#prompt');const cs=nearCrate(),nearLocker=LOCKER&&Math.hypot(PL.x-LOCKER.x,PL.z-LOCKER.z)<1.9;
  if(OPEN&&OPEN.popped&&Math.hypot(PL.x-OPEN.spot.x,PL.z-OPEN.spot.z)<4&&!S.panel){pr.hidden=false;pr.classList.remove('bad');pr.replaceChildren(h('b',{text:RAR[OPEN.g.r].n+' · '+OPEN.g.n+(OPEN.res==='new'?' unlocked!':OPEN.res==='star'?' '+'★'.repeat(starsOf(OPEN.g.type)):' (maxed, coins refunded)')}),h('span',null,h('kbd',{text:'E'}),' continue'))}
  else if(cs&&!S.panel){const C=cs.C,afford=(Prof.coins||0)>=C.cost;pr.hidden=false;pr.classList.toggle('bad',!afford);pr.replaceChildren(h('b',{text:C.n+' · '+C.cost+' coins · sentries'}),h('span',null,afford?h('kbd',{text:'E'}):null,afford?' buy and open   ':'Need '+(C.cost-(Prof.coins||0))+' more coins   ',h('span',{class:'odds',style:'display:inline-flex'},C.odds.map((o,i)=>o?h('span',{style:'color:'+RAR[i].c,text:RAR[i].n+' '+o+'%'}):null))))}
  else if(nearLocker&&!S.panel){pr.hidden=false;pr.classList.remove('bad');pr.replaceChildren(h('b',{text:'Armory'}),h('span',null,h('kbd',{text:'E'}),' view your sentries and gear'))}
- else if(S.pad&&!S.panel){pr.hidden=false;pr.classList.remove('bad');const D=MAPS[S.pad];const waiting=mem.length-pads.filter(p=>p===S.pad).length;pr.replaceChildren(h('b',{text:D.name}),h('span',{text:waiting?'Waiting for '+waiting+' more player'+(waiting>1?'s':'')+' to step on this pad':(lc&&lc.map===S.pad?'Launching…':'Everyone is here')}))}
+ else if(S.pad&&!S.panel){const D=MAPS[S.pad];pr.hidden=false;pr.classList.remove('bad');
+  if(r&&r.map===S.pad){const waiting=mem.length-pads.filter(p=>p===S.pad).length;
+   pr.replaceChildren(h('b',{text:D.name+' · your party '+mem.length+'/'+(r.max||MAXP)}),h('span',{text:waiting?('Waiting for '+waiting+' more to stand on this pad'):(r.st==='play'?'A match is running here':(lc&&lc.map===S.pad?'Launching…':'Everyone is on the pad'))}))}
+  else{const open=parts.filter(x=>x.hr.map===S.pad);
+   pr.replaceChildren(h('b',{text:D.name}),h('span',null,h('kbd',{text:'E'}),' ',open.length?open.map(x=>shortName(x.name)+(x.count>=(x.hr.max||MAXP)?' (full)':"'s party "+x.count+'/'+(x.hr.max||MAXP))).join(' · '):'open your party on this pad'))}}
  else pr.hidden=true;
  const t=performance.now();if(t-campHudLast<200)return;campHudLast=t;
- const status=lc?('Launching '+MAPS[lc.map].name+' in '+Math.max(0,Math.ceil((lc.at-now())/1000))+'…'):(r.st==='play'?'A match is running':'Stand on a launch pad together to deploy');
- $('#campStatus').textContent=status;$('#campJoin').hidden=!(r.st==='play'&&!r.isHost);
+ const campers=others().filter(p=>p.presence&&p.presence.n&&p.presence.vw==='camp');
+ $('#campStatus').textContent=(lc?('Launching '+MAPS[lc.map].name+' in '+Math.max(0,Math.ceil((lc.at-now())/1000))+'s')
+  :(r?('Party on '+(MAPS[r.map]?MAPS[r.map].name:'?')+' · '+mem.length+'/'+(r.max||MAXP)+' · '+(r.st==='play'?'match running':(mem.length&&pads.every(p=>p===r.map)?((r.armed||mem.length>=(r.max||MAXP))?'launching':'holding for players'):'everyone stand on the pad')+' · L leaves')+' · code '+r.code)
+   :'Walk onto a deploy zone to set up a party'))+' · '+(campers.length+1)+' in camp';
+ $('#campJoin').hidden=!(r&&r.st==='play'&&!r.isHost&&S.pad===r.map);
  $('#campScrap').textContent=Prof.coins||0;
- $('#campPlayers').replaceChildren(...mem.map((m,i)=>h('div',null,h('span',{class:'dot',style:'background:'+safeColor(m.presence.c)}),String(m.presence.n),(m.me?r.isHost:m.peer===r.hostPeer)?h('span',{class:'muted',text:' host'}):null,h('span',{class:'muted',style:'margin-left:auto',text:pads[i]?MAPS[pads[i]].name:''}))));
- const ds=$('#campDiff');if(r.isHost){ds.disabled=false;const hardOk=!!(Prof.cleared&&(Prof.cleared.normal||Prof.cleared.hard));if(ds.dataset.hk!==String(hardOk)){ds.dataset.hk=String(hardOk);ds.replaceChildren(...Object.entries(DIFF).map(([k,D])=>h('option',{value:k,disabled:k==='hard'&&!hardOk},D.name+' · '+D.waves+' waves'+(k==='hard'&&!hardOk?' (win Normal to unlock)':''))))}ds.value=r.df||'normal'}
- else{ds.disabled=true;ds.replaceChildren(h('option',{text:(DIFF[r.df]||DIFF.normal).name+' (host picks)'}))}}
-$('#campDiff').onchange=e=>{if(S.rm&&S.rm.isHost){S.rm.df=e.target.value;pushPresence(true)}};
+ if(padPopPad)renderPadPop();
+ if(!$('#campPanel').hidden)renderCampPanel()}
+function padParties(pad){return hostedRooms().filter(x=>x.hr.map===pad)}
+function openPadPop(){if(S.view!=='camp')return;$('#padPop').hidden=false;padPopPad=S.pad;S.panel='pad';if(document.pointerLockElement)document.exitPointerLock();renderPadPop();updateLockHint()}
+function closePadPop(){if(padPopPad)padPopSeen=padPopPad;$('#padPop').hidden=true;padPopPad=null;if(S.panel==='pad')S.panel=null;updateLockHint();if(S.view==='camp')lockPointer()}
+function renderPadPop(){const pad=padPopPad;if(!pad)return;const D=MAPS[pad],r=S.rm,here=padParties(pad);
+ const mem=r?roomMembers():[],onPad=r?mem.filter(m=>(m.me?S.pad:(m.presence.pd||null))===pad).length:0;
+ const lc=r?(r.isHost?r.lc:((peerById(r.hostPeer)||{presence:{}}).presence.hr||{}).lc):null;
+ $('#padTitle').textContent=D.name;
+ $('#padWho').textContent=r&&r.map===pad?(onPad+'/'+mem.length+' on the pad · '+(mem.length||1)+'/'+(r.max||MAXP)+' players')
+  :(here.length?(here.length+' '+(here.length===1?'party':'parties')+' here'):'no parties here');
+ const full=!!(r&&mem.length>=(r.max||MAXP));
+ let noteTxt;
+ if(r&&r.map===pad){
+  if(lc&&lc.map===pad)noteTxt='Launching in '+Math.max(0,Math.ceil((lc.at-now())/1000))+'s · stay on the pad';
+  else if(r.st==='play')noteTxt='A match is already running in this party';
+  else if(onPad<mem.length)noteTxt='All '+mem.length+' party members stand on this pad to launch · press L to leave';
+  else if(full||r.armed)noteTxt='Starting the four second count';
+  else noteTxt='Open party · '+mem.length+'/'+(r.max||MAXP)+' · friends join here, or the host launches with who is here';
+ }else if(r)noteTxt='You are in a party on '+((MAPS[r.map]||{}).name||'?')+' · press L to leave it, then open one here';
+ else noteTxt='Pick the player limit and difficulty, open your party here, and friends who walk onto this pad can join it';
+ $('#padNote').textContent=noteTxt;
+ const capEl=$('#padMax'),ds=$('#padDiff'),mineHere=!!(r&&r.map===pad),canSet=mineHere?(r.isHost||S.admin):!r;
+ const lockSel=(el,text)=>{if(el.dataset.lock!==text){el.dataset.lock=text;el.replaceChildren(h('option',{text}));el.disabled=true}};
+ if(r&&r.map!==pad){lockSel(capEl,'leave your party first');lockSel(ds,'leave your party first')}
+ else if(!canSet){lockSel(capEl,(r.max||MAXP)+' players (host picks)');lockSel(ds,(DIFF[r.df]||DIFF.normal).name+' (host picks)')}
+ else{delete capEl.dataset.lock;delete ds.dataset.lock;const cur=+((r?r.max:prefs.cap)||MAXP);const opts=[...Array(MAXP)].map((_,i)=>i+1).filter(n=>!r||n>=mem.length);
+  if(capEl.dataset.sig!==opts.join(',')){capEl.dataset.sig=opts.join(',');capEl.replaceChildren(...opts.map(n=>h('option',{value:String(n),text:n===1?'1 · solo':n+' players'})))}
+  capEl.value=String(clamp(cur,Math.max(1,r?mem.length:1),MAXP));capEl.disabled=false;
+  const hardOk=!!(Prof.cleared&&(Prof.cleared.normal||Prof.cleared.hard));
+  if(ds.dataset.hk!==String(hardOk)){ds.dataset.hk=String(hardOk);ds.replaceChildren(...Object.entries(DIFF).map(([k,D])=>h('option',{value:k,disabled:k==='hard'&&!hardOk},D.name+' · '+D.waves+' waves'+(k==='hard'&&!hardOk?' (win Normal to unlock)':''))))}
+  ds.value=(r?r.df:prefs.df)||'normal';ds.disabled=false}
+ const rl=$('#padRooms'),rsig=here.map(x=>[x.peer,x.hr.id,x.count,x.hr.max||MAXP,x.hr.st||'',x.hr.df||'',x.hr.map,shortName(x.name),r&&r.id===x.hr.id?'me':'',S.admin?'a':''].join('~')).join(';');
+ if(rl.dataset.sig!==rsig){rl.dataset.sig=rsig;rl.replaceChildren(...(here.length?here.map(x=>{const full=x.count>=(x.hr.max||MAXP),mine=!!(r&&r.id===x.hr.id);
+  return h('div',null,h('span',{class:'dot',style:'background:'+safeColor(String((peerById(x.peer)||{presence:{}}).presence.c||''))}),h('span',{text:shortName(x.name)+(mine?' (you)':'')}),
+   h('span',{class:'muted',text:(DIFF[x.hr.df]||DIFF.normal).name}),
+   h('span',{class:'muted',style:'margin-left:auto',text:x.count+'/'+(x.hr.max||MAXP)+(x.hr.st==='play'?' · live':'')}),
+   mine?null:h('button',{class:'btn',style:'padding:2px 7px;font-size:11px',disabled:full&&!S.admin,onclick:()=>{joinParty(x);renderPadPop()},text:full?'full':'join'}))})
+  :[h('div',{class:'muted',text:'Nobody on this pad yet'})]))}
+ const o=$('#padOpen'),l=$('#padLeave'),j=$('#padJoin'),a=$('#padArm');
+ o.hidden=!!(r&&r.map===pad);o.disabled=!pad;
+ a.hidden=!(r&&r.map===pad&&r.isHost&&r.st!=='play'&&!(full&&onPad===mem.length));
+ a.textContent=r&&r.armed?'Cancel launch':'Launch with '+(mem.length||1)+(mem.length===1?' player':' players');
+ j.hidden=!(r&&r.st==='play'&&!r.isHost&&r.map===pad);
+ l.hidden=!r;l.innerHTML='';l.append(document.createTextNode(r&&r.map===pad?'Leave this party':'Leave your party'),h('kbd',{text:'L'}))}
+function openCampPanel(){if(S.view!=='camp')return;$('#campPanel').hidden=false;S.panel='camp';if(document.pointerLockElement)document.exitPointerLock();renderCampPanel();updateLockHint()}
+function closeCampPanel(){$('#campPanel').hidden=true;if(S.panel==='camp')S.panel=null;updateLockHint();if(S.view==='camp'&&!padPopPad)lockPointer()}
+function renderCampPanel(){const r=S.rm,parts=hostedRooms(),mem=r?roomMembers():[];
+ const campers=others().filter(p=>p.presence&&p.presence.n&&p.presence.vw==='camp');
+ $('#campOnline').textContent=(campers.length+1)+' in camp · '+parts.length+' open '+(parts.length===1?'party':'parties');
+ $('#campScrap2').textContent=Prof.coins||0;
+ const rows=r?mem.map(m=>({peer:m.peer,me:!!m.me,name:String(m.presence.n||'Survivor'),color:m.presence.c,admin:m.me?S.admin:!!((peerById(m.peer)||{}).admin),host:m.me?r.isHost:m.peer===r.hostPeer,pad:m.me?S.pad:(m.presence.pd||null)}))
+  :[{peer:S.myPeer,me:true,name:Prof.name||'You',color:Prof.color,admin:S.admin,host:false,pad:S.pad}]
+   .concat(campers.map(p=>({peer:p.peer,me:false,name:String(p.presence.n),color:p.presence.c,admin:!!p.admin,host:false,pad:p.presence.pd||null})));
+ const pl=$('#campPlayers'),psig=rows.map(c=>[c.peer,c.name,c.pad||'',c.admin?'a':'',c.host?'h':'',c.me?'m':''].join('~')).join(';');
+ if(pl.dataset.psig!==psig){pl.dataset.psig=psig;pl.replaceChildren(...rows.map(campRow))}
+ const cl=$('#campRooms'),csig=parts.map(x=>[x.peer,x.hr.id,x.count,x.hr.max||MAXP,x.hr.st||'',x.hr.df||'',x.hr.map,shortName(x.name),r&&r.id===x.hr.id?'me':'',S.admin?'a':''].join('~')).join(';')+'|'+(r?r.id:'')+S.admin;
+ if(cl.dataset.csig!==csig){cl.dataset.csig=csig;cl.replaceChildren(...(parts.length?parts.map(x=>{const full=x.count>=(x.hr.max||MAXP),mine=!!(r&&r.id===x.hr.id);
+  return h('div',null,h('span',{class:'dot',style:'background:'+safeColor(String((peerById(x.peer)||{presence:{}}).presence.c||''))}),h('span',{text:shortName(x.name)+(mine?' (you)':'')}),
+   h('span',{class:'muted',text:(MAPS[x.hr.map]?MAPS[x.hr.map].name:'?')+' · '+(DIFF[x.hr.df]||DIFF.normal).name}),
+   h('span',{class:'muted',style:'margin-left:auto',text:x.count+'/'+(x.hr.max||MAXP)+(x.hr.st==='play'?' · live':'')}),
+   mine?null:h('button',{class:'btn',style:'padding:2px 7px;font-size:11px',disabled:full&&!S.admin,onclick:()=>{joinParty(x);renderCampPanel()},text:full?'full':'join'}))})
+  :[h('div',{class:'muted',text:'None yet — step onto a deploy zone'})]))}
+ const admEl=$('#campAdm'),wantAdm=!!(Prof.name&&Prof.name.toLowerCase()==='sapnap'&&!S.admin);
+ if(wantAdm&&!admEl.dataset.on){admEl.dataset.on='1';admEl.replaceChildren(...adminUnlockRow())}
+ else if(!wantAdm&&admEl.dataset.on){delete admEl.dataset.on;admEl.replaceChildren()}
+ $('#campLeave').hidden=!r}
+function shortName(n){n=String(n||'Survivor');return n.length>10?n.slice(0,9)+'…':n}
+function campRow(c){return h('div',null,h('span',{class:'dot',style:'background:'+safeColor(c.color)}),shortName(c.name),
+ c.admin?h('span',{class:'tag host',text:'admin'}):null,c.host?h('span',{class:'muted',text:'host'}):null,c.me?h('span',{class:'muted',text:'you'}):null,
+ h('span',{class:'muted',style:'margin-left:auto',text:c.pad?MAPS[c.pad].name:'camp'}),
+ (S.admin&&!c.me&&S.rm)?h('button',{class:'btn danger',style:'padding:2px 7px;font-size:11px',onclick:()=>{if(S.room)S.room.kick(c.peer)},text:'kick'}):null)}
+$('#padMax').onchange=e=>{const v=clamp(+e.target.value,1,MAXP);if(!S.rm){prefs.cap=v;savePrefs()}else if(S.rm.isHost){S.rm.max=v;pushPresence(true)}else if(S.admin)request('settings',{max:v})};
+$('#padDiff').onchange=e=>{const v=e.target.value;if(!S.rm){prefs.df=v;savePrefs()}else if(S.rm.isHost){S.rm.df=v;pushPresence(true)}else if(S.admin)request('settings',{df:v})};
+$('#padOpen').onclick=()=>{openParty(padPopPad||S.pad);renderPadPop()};
+$('#padLeave').onclick=()=>{leaveParty();renderPadPop()};
+$('#padJoin').onclick=()=>{S.leftGid=-1;enterGame()};
+$('#padArm').onclick=()=>{if(!S.rm||!S.rm.isHost)return;S.rm.armed=!S.rm.armed;S.rm.lc=null;pushPresence(true);campHudLast=0;renderPadPop()};
+$('#padClose').onclick=closePadPop;
+$('#campPanelBtn').onclick=openCampPanel;
+$('#campPanelClose').onclick=closeCampPanel;
+$('#campLeave').onclick=()=>{leaveParty();renderCampPanel()};
+$('#campLobby').onclick=exitCamp;
 $('#campSettings').onclick=openSettings;
 $('#campJoin').onclick=()=>{S.leftGid=-1;enterGame()};
+$('#chatToggle').onclick=openChat;
+$('#chatSend').onclick=sendChat;
+$('#chatIn').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'){e.preventDefault();sendChat()}else if(e.key==='Escape'){e.preventDefault();closeChat()}});
 
 
 function nearCrate(){let b=null,bd=2.2;for(const c of CRATE_SPOTS){const d=Math.hypot(PL.x-c.x,PL.z-c.z);if(d<bd){bd=d;b=c}}return b}
 function campInteract(){if(OPEN&&OPEN.popped&&Math.hypot(PL.x-OPEN.spot.x,PL.z-OPEN.spot.z)<4){closeOpen();return}
+ if(S.pad){const open=hostedRooms().filter(x=>x.hr.map===S.pad);const j=open.find(x=>x.count<(x.hr.max||MAXP))||open[0];
+  if(!j){if(!S.rm)openParty(S.pad);else if(S.rm.map!==S.pad)toast('You are in a party on '+MAPS[S.rm.map].name+'. Leave it in the panel to open one here.');return}
+  if(j.peer===S.myPeer)return;
+  if(j.count>=(j.hr.max||MAXP)&&!S.admin){toast('That party is full.');return}
+  joinParty(j);return}
  const c=nearCrate();if(c){buyCrate3D(c);return}if(LOCKER&&Math.hypot(PL.x-LOCKER.x,PL.z-LOCKER.z)<1.9)openShop()}
 /* ============ difficulty & host-authoritative simulation ============ */
 const DIFF={easy:{name:'Easy',waves:8,hp:.75,gold:420,reward:1},normal:{name:'Normal',waves:10,hp:1,gold:350,reward:1.6},hard:{name:'Hard',waves:12,hp:1.35,gold:300,reward:2.5}};
@@ -973,7 +1151,7 @@ function buildWave(w,total){const list=[];const add=(t,n)=>{for(let i=0;i<n;i++)
  if(w===total){list.push('brute','brute','boss')}else if(w%5===0)list.push('boss');
  let t=now()+800;return list.map(type=>{const o={t,type,mini:type==='boss'&&w!==total};t+=type==='runner'?520:(type==='brute'||type==='boss'?1600:850);return o})}
 function startWave(){H.wave++;H.phase='wave';H.q=buildWave(H.wave,H.wt)}
-function simHost(dt){if(!H||H.st!=='play')return;const tn=now();
+function simHost(dt){if(!H||H.st!=='play')return;const tn=now();if(S.admin)H.gold=Math.max(H.gold,999999);
  if(H.phase==='count'){if(tn>=H.cdEnd)startWave();return}
  const mult=(1+.2*(H.wave-1))*DIFF[H.df].hp;
  while(H.q.length&&H.q[0].t<=tn){const q=H.q.shift();const hp=Math.round(ENEMIES[q.type].hp*mult*(q.mini?.5:1));H.en.push({id:H.nid++,type:q.type,d:0,hp,max:hp,sb:0,fl:0,next:tn+3000+R(2000),until:0})}
@@ -992,8 +1170,12 @@ function simHost(dt){if(!H||H.st!=='play')return;const tn=now();
  H.en=H.en.filter(e=>!e.done);
  if(H.base<=0){H.st='lost';pushPresence(true);return}
  if(!H.q.length&&!H.en.length){H.wd=H.wave;H.gold+=40+10*H.wave;if(H.wave>=H.wt)H.st='won';else{H.phase='count';H.cdEnd=tn+20000}pushPresence(true)}}
-function hostAction(peer,d){if(!H)return;const say=m=>{if(peer===S.myPeer)toast(m)};
+function hostAction(peer,d){if(!H)return;const say=m=>{if(peer===S.myPeer)toast(m)};const adm=isAdminPeer(peer);
  if(d.a==='again'){if(H.st!=='play'){S.rm.gid++;initGame();pushPresence(true)}return}
+ if(d.a==='settings'){if(!adm&&peer!==S.myPeer)return;if(d.max!=null)S.rm.max=clamp(+d.max||MAXP,1,MAXP);if(d.map!==undefined)S.rm.map=d.map||null;if(d.df&&DIFF[d.df])S.rm.df=d.df;pushPresence(true);return}
+ if(adm&&d.a==='gold'){H.gold=Math.max(H.gold||0,999999);pushPresence(true);return}
+ if(adm&&d.a==='skip'){if(H.st!=='play')return;H.q=[];H.en=[];H.gren=[];pushPresence(true);return}
+ if(adm&&d.a==='end'){H.q=[];H.en=[];H.wave=H.wt;H.st='won';pushPresence(true);return}
  if(H.st!=='play')return;if(d.a==='call'){if(H.phase==='count')H.cdEnd=now();return}const i=+d.slot;
  if(d.a==='build'){const T=TOWERS[d.type];const x=+d.x,z=+d.z;if(!T)return;const why=canPlace(x,z,H.towers.filter(Boolean));if(why){say(why+'.');return}if(H.gold<T.cost){say('Not enough scrap.');return}
   H.gold-=T.cost;const pr=peer===S.myPeer?Prof.name:String((peerById(peer)||{presence:{}}).presence.n||'Survivor');let slot=H.towers.indexOf(null);if(slot<0)slot=H.towers.length;H.towers[slot]={type:d.type,lvl:1,cdLeft:0,tg:0,sh:0,spent:T.cost,by:pr,stun:0,x:+x.toFixed(2),z:+z.toFixed(2),y:placeHeight(x,z),st:clamp(Math.round(+d.st||0),0,5)};pushPresence(true);return}
@@ -1018,25 +1200,25 @@ function updatePlayer(dt){const active=!S.panel&&!isTyping();let f=0,s=0;if(acti
  const fx=-Math.sin(PL.camA),fz=-Math.cos(PL.camA),rx=Math.cos(PL.camA),rz=-Math.sin(PL.camA);let mx=fx*f+rx*s,mz=fz*f+rz*s;const len=Math.hypot(mx,mz);
  const ox=PL.x,oz=PL.z;const sp=down.has('ShiftLeft')?7.5:4.6;
  if(len){mx/=len;mz/=len;PL.x+=mx*sp*dt;PL.z+=mz*sp*dt;PL.face+=angDiff(PL.face,Math.atan2(mx,mz))*Math.min(1,dt*14)}
- collideTD(PL,.4);PL.vy-=22*dt;PL.y+=PL.vy*dt;const gnd=groundAt(PL.x,PL.z,PL.y);if(PL.y<=gnd){PL.y=gnd;PL.vy=Math.max(0,PL.vy);PL.onGround=true}else PL.onGround=PL.y-gnd<.03;
+ collideTD(PL,.4);if(S.admin&&S.fly){PL.vy=0;const up=(down.has('Space')?1:0)-((down.has('ShiftLeft')||down.has('KeyC'))?1:0);PL.y=clamp(PL.y+up*6*dt,.2,26);PL.onGround=false}else{PL.vy-=22*dt;PL.y+=PL.vy*dt;const gnd=groundAt(PL.x,PL.z,PL.y);if(PL.y<=gnd){PL.y=gnd;PL.vy=Math.max(0,PL.vy);PL.onGround=true}else PL.onGround=PL.y-gnd<.03}
  for(const tr of TRAMPS){if(PL.y<.75&&PL.vy<=0&&Math.hypot(PL.x-tr.x,PL.z-tr.z)<tr.r){PL.vy=18;PL.onGround=false;tr.t=.3}tr.t=Math.max(0,tr.t-dt);tr.mat.position.y=.6-Math.sin(tr.t/.3*Math.PI)*.25}
  const moved=Math.hypot(PL.x-ox,PL.z-oz);PL.moving=moved/Math.max(dt,1e-3);PL.movedT+=moved;PL.act=Math.max(0,PL.act-dt);
  if(!PL.avatar){PL.avatar=makeSurvivor(Prof.color,Prof.name,false,Prof.eq);scene.add(PL.avatar.g)}
  PL.avatar.g.position.set(PL.x,PL.y,PL.z);PL.avatar.g.rotation.y=PL.face;animateSurvivor(PL.avatar,dt,PL.moving,!PL.onGround,PL.act);
  // smooth follow camera with collision
- _tgt.set(PL.x,PL.y+1.55,PL.z);const cp=Math.cos(PL.camP),sn=Math.sin(PL.camP);_dir.set(Math.sin(PL.camA)*cp,sn,Math.cos(PL.camA)*cp);
+ const spc=S.spectate&&RAV.get(S.spectate);_tgt.set(spc?spc.x:PL.x,(spc?spc.y:PL.y)+1.55,spc?spc.z:PL.z);const cp=Math.cos(PL.camP),sn=Math.sin(PL.camP);_dir.set(Math.sin(PL.camA)*cp,sn,Math.cos(PL.camA)*cp);
  rc.set(_tgt,_dir);rc.far=settings.dist;const hit=rc.intersectObjects(CAMBLOCK.concat(TBLOCK),false)[0];const want=hit?Math.max(1.1,hit.distance-.35):settings.dist;
  PL.camD=want<PL.camD?want:PL.camD+(want-PL.camD)*Math.min(1,dt*3);
  _cam.copy(_tgt).addScaledVector(_dir,PL.camD);if(_cam.y<.35)_cam.y=.35;
  camera.position.lerp(_cam,Math.min(1,dt*14));if(camera.position.distanceTo(_cam)>6)camera.position.copy(_cam);
  if(PL.shake>0){PL.shake=Math.max(0,PL.shake-dt);camera.position.x+=R(.16)-.08;camera.position.y+=R(.16)-.08}
- PL.avatar.g.visible=PL.camD>1.35;camera.lookAt(_tgt);pushPresence()}
+ PL.avatar.g.visible=!S.spectate&&PL.camD>1.35;camera.lookAt(_tgt);pushPresence()}
 function jump(){if(PL.onGround)PL.vy=7}
 
 /* remote survivors */
 const RAV=new Map();
 function syncRemote(dt){const seen=new Set();const k=1-Math.pow(.001,dt);
- for(const p of others()){const q=p.presence;if(!q||!S.rm||q.rm!==S.rm.id||q.vw!==S.view||!q.n)continue;seen.add(p.peer);let A=RAV.get(p.peer);const key=safeColor(q.c)+q.n+q.eq;
+ for(const p of others()){const q=p.presence;if(!q||!q.n||q.vw!==S.view)continue;if(S.view==='game'&&(!S.rm||q.rm!==S.rm.id))continue;seen.add(p.peer);let A=RAV.get(p.peer);const key=safeColor(q.c)+q.n+q.eq;
   if(A&&A.key!==key){scene.remove(A.ch.g);RAV.delete(p.peer);A=null}
   if(!A){const ch=makeSurvivor(safeColor(q.c),String(q.n),true,parseEq(q.eq));scene.add(ch.g);A={ch,key,x:+q.x||0,z:+q.z||0,y:0,r:+q.r||0};RAV.set(p.peer,A)}
   const px=A.x,pz=A.z;A.x+=((+q.x||0)-A.x)*k;A.z+=((+q.z||0)-A.z)*k;A.y+=((+q.y||0)-A.y)*k;A.r+=angDiff(A.r,+q.r||0)*k;
@@ -1163,12 +1345,12 @@ function confirmPlace(){if(!PLACE)return;justPlaced=!document.pointerLockElement
 /* ============ game enter / exit / end / rewards ============ */
 function resetPlayer(){PL.x=PSPAWN.x+rnd(-1,1);PL.z=PSPAWN.z+rnd(-1,1);PL.y=0;PL.vy=0;PL.camA=PSPAWN.a;PL.camP=.45;PL.camD=settings.dist;PL.face=PSPAWN.a+Math.PI;PL.onGround=true}
 let startTutorialNext=false;
-function enterGame(){loadMap((S.rm&&S.rm.map)||'outpost');$('#campHud').hidden=true;$('#prompt').hidden=true;S.view='game';$('#lobby').hidden=true;$('#hud').hidden=false;$('#endScreen').hidden=true;$('#menu').hidden=true;S.panel=null;clearVisuals();resetPlayer();V_last=null;updateLockHint();pushPresence(true);
+function enterGame(){loadMap((S.rm&&S.rm.map)||'outpost');$('#campHud').hidden=true;$('#prompt').hidden=true;$('#chatToggle').hidden=chatOpen;S.view='game';$('#lobby').hidden=true;$('#hud').hidden=false;$('#endScreen').hidden=true;$('#menu').hidden=true;S.panel=null;padPopPad=null;padPopSeen=null;$('#padPop').hidden=true;$('#campPanel').hidden=true;clearVisuals();resetPlayer();V_last=null;updateLockHint();pushPresence(true);
  if(startTutorialNext||!store.get('tutDone',false)){startTutorialNext=false;setTimeout(startTutorial,900)}}
-function exitGame(msg){const wasHost=S.rm&&S.rm.isHost;if(wasHost&&S.rm.st==='play'){S.rm.st='lobby';H=null}if(S.rm&&!wasHost){S.leftGid=S.rm.gid;S.rdy=false}
- S.view='lobby';closeSide();endTutorial(true);if(document.pointerLockElement)document.exitPointerLock();$('#hud').hidden=true;$('#endScreen').hidden=true;$('#menu').hidden=true;$('#lockhint').hidden=true;S.panel=null;
+function exitGame(msg){S.spectate=null;$('#chatBox').hidden=true;chatOpen=false;const wasHost=S.rm&&S.rm.isHost;if(wasHost&&S.rm.st==='play'){S.rm.st='lobby';H=null}if(S.rm&&!wasHost){S.leftGid=S.rm.gid;S.rdy=false}
+ S.view='lobby';closeSide();endTutorial(true);if(document.pointerLockElement)document.exitPointerLock();$('#hud').hidden=true;$('#endScreen').hidden=true;$('#menu').hidden=true;$('#lockhint').hidden=true;$('#chatToggle').hidden=true;S.panel=null;padPopPad=null;padPopSeen=null;$('#padPop').hidden=true;$('#campPanel').hidden=true;
  clearVisuals();for(const [,A] of RAV)scene.remove(A.ch.g);RAV.clear();if(PL.avatar){scene.remove(PL.avatar.g);PL.avatar=null}
- if(S.rm)enterCamp();else{$('#lobby').hidden=false;loadMap('camp');renderLobby()}pushPresence(true);if(msg)toast(msg)}
+ if(Prof.name)enterCamp();else{$('#lobby').hidden=false;loadMap('camp');renderLobby()}pushPresence(true);if(msg)toast(msg)}
 function showEnd(V){endShownGid=V.gid;const win=V.st==='won';const D=DIFF[V.df]||DIFF.normal;
  const reward=Math.round((V.wd*5+V.k*.3+(win?40:0))*D.reward);Prof.coins=(Prof.coins||0)+reward;Prof.games=(Prof.games||0)+1;Prof.best=Prof.best||{};Prof.best[V.df]=Math.max(Prof.best[V.df]||0,V.wd);if(win){Prof.cleared=Prof.cleared||{};Prof.cleared[V.df]=true}saveProf();
  $('#endTitle').textContent=win?'The outpost held':'The outpost fell';$('#endTitle').className=win?'win':'lose';
@@ -1181,8 +1363,11 @@ $('#mResume').onclick=()=>{$('#menu').hidden=true;S.panel=null;lockPointer()};
 $('#mSettings').onclick=openSettings;
 $('#mTutorial').onclick=()=>{$('#menu').hidden=true;S.panel=null;startTutorial()};
 $('#mLobby').onclick=()=>exitGame(S.rm&&S.rm.isHost?'Match ended. You are back in the room lobby.':null);
+$('#mSkip').onclick=()=>{request('skip');$('#menu').hidden=true;S.panel=null;lockPointer()};
+$('#mEnd').onclick=()=>{request('end');$('#menu').hidden=true;S.panel=null};
+$('#mPurge').onclick=()=>{if(S.room)S.room.purge();toast('Chat purged.')};
 $('#btnMenu').onclick=()=>openMenu();
-function openMenu(){if(S.view!=='game'||S.panel==='end')return;$('#menu').hidden=false;S.panel='menu';closeSide();if(document.pointerLockElement)document.exitPointerLock();updateLockHint()}
+function openMenu(){if(S.view!=='game'||S.panel==='end')return;$('#admMenu').hidden=!S.admin;$('#menu').hidden=false;S.panel='menu';closeSide();if(document.pointerLockElement)document.exitPointerLock();updateLockHint()}
 function closeMenus(){$('#menu').hidden=true;$('#settings').hidden=true;S.panel=null;updateLockHint()}
 
 /* ============ input ============ */
@@ -1191,7 +1376,7 @@ function lockPointer(){if(!playing()||S.panel)return;try{const r=$('#gl').reques
 function updateLockHint(){$('#lockhint').hidden=!(playing()&&!S.panel&&!document.pointerLockElement&&S.sel==null&&!PLACE&&!(T.active&&TUT[T.i].sel))}
 $('#lockbtn').onclick=lockPointer;
 $('#gl').addEventListener('click',()=>{if(playing()&&!document.pointerLockElement&&!S.panel&&!PLACE&&!justPlaced)lockPointer();justPlaced=false});let justPlaced=false;
-let wasLocked=false;document.addEventListener('pointerlockchange',()=>{const l=!!document.pointerLockElement;if(!l&&wasLocked&&S.view==='game'&&!S.panel&&S.sel==null)openMenu();wasLocked=l;updateLockHint()});
+let wasLocked=false;document.addEventListener('pointerlockchange',()=>{const l=!!document.pointerLockElement;if(!l&&wasLocked&&S.view==='game'&&!S.panel&&S.sel==null&&!chatOpen)openMenu();wasLocked=l;updateLockHint()});
 function rotateCam(dx,dy){const s=settings.sens*.0025;PL.camA-=dx*s;PL.camP=clamp(PL.camP+(settings.invert?-dy:dy)*s,-.1,1.25);tutLook+=Math.abs(dx)+Math.abs(dy)}
 let tutLook=0,rdrag=false;
 document.addEventListener('mousemove',e=>{if(document.pointerLockElement===$('#gl'))rotateCam(e.movementX,e.movementY);else if(rdrag)rotateCam(e.movementX,e.movementY)});
@@ -1199,8 +1384,14 @@ $('#gl').addEventListener('mousedown',e=>{if(!playing())return;if(PLACE&&!S.pane
 window.addEventListener('mouseup',e=>{if(e.button===2)rdrag=false});
 $('#gl').addEventListener('contextmenu',e=>e.preventDefault());
 window.addEventListener('keydown',e=>{if(isTyping())return;
- if(e.code==='Escape'){if(!$('#settings').hidden){$('#settings').hidden=true;if(S.view==='game'){$('#menu').hidden=false;S.panel='menu'}else S.panel=null;return}if(!$('#shop').hidden){closeShop();return}if(S.view!=='game')return;if(PLACE){cancelPlace();updateLockHint();return}if(S.sel!=null){closeSide();updateLockHint();return}if(S.panel==='menu'){closeMenus();return}openMenu();return}
- if(!playing())return;if(['Space','KeyW','KeyA','KeyS','KeyD'].includes(e.code))e.preventDefault();down.add(e.code);if(e.repeat||S.panel)return;
+ if(e.code==='Escape'){if(!$('#padPop').hidden){closePadPop();return}if(!$('#campPanel').hidden){closeCampPanel();return}if(!$('#settings').hidden){$('#settings').hidden=true;if(S.view==='game'){$('#menu').hidden=false;S.panel='menu'}else S.panel=null;return}if(!$('#shop').hidden){closeShop();return}if(S.view!=='game')return;if(PLACE){cancelPlace();updateLockHint();return}if(S.sel!=null){closeSide();updateLockHint();return}if(S.panel==='menu'){closeMenus();return}openMenu();return}
+ if(!playing())return;if(['Space','KeyW','KeyA','KeyS','KeyD'].includes(e.code))e.preventDefault();down.add(e.code);
+ if(e.code==='KeyL'&&S.view==='camp'&&!e.repeat){if(S.rm){leaveParty();if(!$('#padPop').hidden)renderPadPop();if(!$('#campPanel').hidden)renderCampPanel()}else toast('You are not in a party.');return}
+ if(e.code==='KeyT'&&!chatOpen&&!S.panel&&!e.repeat&&S.view!=='lobby'){e.preventDefault();openChat();return}
+ if(e.repeat||S.panel)return;
+ if(S.view==='game'&&S.admin){
+  if(e.code==='KeyF'){S.fly=!S.fly;toast(S.fly?'Fly on: Space up · Shift or C down':'Fly off');return}
+  if(e.code==='KeyV'){const t=others().filter(p=>p.presence&&p.presence.rm===S.rm.id&&p.presence.n&&p.presence.vw==='game').map(p=>p.peer);const i=t.indexOf(S.spectate);S.spectate=i+1<t.length?t[i+1]:null;toast(S.spectate?'Spectating '+String(((peerById(S.spectate)||{}).presence||{}).n||'survivor'):'Spectating off');return}}
  if(S.view==='camp'){if(e.code==='Space')jump();if(e.code==='KeyE')campInteract();return}
  const V=currentView();
  if(e.code==='Space')jump();
@@ -1238,10 +1429,10 @@ function nextStep(){if(T.i<TUT.length-1){T.i++;showStep()}else endTutorial()}
 $('#tnext').onclick=nextStep;$('#tskip').onclick=()=>endTutorial();
 
 /* ============ loop & boot ============ */
-let last=performance.now(),lobbyAng=0,blinkT=0;
+let last=performance.now(),lobbyAng=0,blinkT=0,admGoldT=0;
 function loop(t){const dt=Math.min(.05,(t-last)/1000);last=t;
  try{for(const f of ANIM)f(dt);for(const f of MAPANIM)f(dt);blinkT+=dt;const on=Math.sin(blinkT*4)>0;for(const b of blinkers)b.material.emissiveIntensity=on?2.2:.15;
-  if(S.view==='game'&&S.rm){if(S.rm.isHost)simHost(dt);const V=currentView();updatePlayer(dt);syncRemote(dt);syncVisuals(V,dt);updatePlace(V);updateInteract(V);hud(V);if(T.active)placeTut()}
+  if(S.view==='game'&&S.rm){if(S.rm.isHost)simHost(dt);else if(S.admin){admGoldT-=dt;if(admGoldT<=0){admGoldT=1.5;request('gold')}}const V=currentView();updatePlayer(dt);syncRemote(dt);syncVisuals(V,dt);updatePlace(V);updateInteract(V);hud(V);if(T.active)placeTut()}
   else if(S.view==='camp'){updatePlayer(dt);syncRemote(dt);campTick(dt)}
   else{lobbyAng+=dt*.04;camera.position.set(Math.sin(lobbyAng)*44+4,26,Math.cos(lobbyAng)*44);camera.lookAt(0,0,0)}
   updateFx(dt);renderer.render(scene,camera);watchdog()}catch(err){console.error(err)}
@@ -1249,7 +1440,7 @@ function loop(t){const dt=Math.min(.05,(t-last)/1000);last=t;
 window.addEventListener('resize',resizeGL);
 (function boot(){if(typeof THREE==='undefined'){document.body.append(h('div',{id:'glerr'},h('h2',{text:'The 3D engine could not load. Check your connection and reload.'})));return}
  try{initGL()}catch(e){console.error(e);document.body.append(h('div',{id:'glerr'},h('h2',{text:'This game needs WebGL. Try an up-to-date Chrome, Edge, Firefox or Safari.'})));return}
- ensureInv();renderLobby();requestAnimationFrame(loop);initCaps().catch(()=>{S.capsReady=true;renderLobby()})})();
+ ensureInv();if(Prof.name&&!renderLobby.editName)enterCamp();else renderLobby();requestAnimationFrame(loop);initCaps().catch(()=>{S.capsReady=true;renderLobby()})})();
 </script>
 </body>
 </html>
