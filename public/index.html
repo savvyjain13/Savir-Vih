@@ -1235,9 +1235,9 @@ function collideTD(o,r){const circles=COL.concat(TV.filter(Boolean).map(tv=>({x:
 const rc=new THREE.Raycaster(),_tgt=new THREE.Vector3(),_dir=new THREE.Vector3(),_cam=new THREE.Vector3();
 function updatePlayer(dt){const active=!S.panel&&!isTyping();let f=0,s=0;if(active){if(down.has('KeyW'))f+=1;if(down.has('KeyS'))f-=1;if(down.has('KeyD'))s+=1;if(down.has('KeyA'))s-=1}
  const fx=-Math.sin(PL.camA),fz=-Math.cos(PL.camA),rx=Math.cos(PL.camA),rz=-Math.sin(PL.camA);let mx=fx*f+rx*s,mz=fz*f+rz*s;const len=Math.hypot(mx,mz);
- const ox=PL.x,oz=PL.z;const sp=down.has('ShiftLeft')?7.5:4.6;
+ const ox=PL.x,oz=PL.z;const flyNow=S.admin&&S.fly;const sp=flyNow?22:(down.has('ShiftLeft')?7.5:4.6);
  if(len){mx/=len;mz/=len;PL.x+=mx*sp*dt;PL.z+=mz*sp*dt;PL.face+=angDiff(PL.face,Math.atan2(mx,mz))*Math.min(1,dt*14)}
- collideTD(PL,.4);if(S.admin&&S.fly){PL.vy=0;const up=(down.has('Space')?1:0)-((down.has('ShiftLeft')||down.has('KeyC'))?1:0);PL.y=clamp(PL.y+up*6*dt,.2,26);PL.onGround=false}else{PL.vy-=22*dt;PL.y+=PL.vy*dt;const gnd=groundAt(PL.x,PL.z,PL.y);if(PL.y<=gnd){PL.y=gnd;PL.vy=Math.max(0,PL.vy);PL.onGround=true}else PL.onGround=PL.y-gnd<.03}
+ collideTD(PL,.4);if(flyNow){PL.vy=0;const up=(down.has('Space')?1:0)-((down.has('ShiftLeft')||down.has('KeyC'))?1:0);PL.y=clamp(PL.y+up*14*dt,.2,26);PL.onGround=false}else{PL.vy-=22*dt;PL.y+=PL.vy*dt;const gnd=groundAt(PL.x,PL.z,PL.y);if(PL.y<=gnd){PL.y=gnd;PL.vy=Math.max(0,PL.vy);PL.onGround=true}else PL.onGround=PL.y-gnd<.03}
  for(const tr of TRAMPS){if(PL.y<.75&&PL.vy<=0&&Math.hypot(PL.x-tr.x,PL.z-tr.z)<tr.r){PL.vy=18;PL.onGround=false;tr.t=.3}tr.t=Math.max(0,tr.t-dt);tr.mat.position.y=.6-Math.sin(tr.t/.3*Math.PI)*.25}
  const moved=Math.hypot(PL.x-ox,PL.z-oz);PL.moving=moved/Math.max(dt,1e-3);PL.movedT+=moved;PL.act=Math.max(0,PL.act-dt);
  if(!PL.avatar){PL.avatar=makeSurvivor(Prof.color,Prof.name,false,Prof.eq);scene.add(PL.avatar.g)}
