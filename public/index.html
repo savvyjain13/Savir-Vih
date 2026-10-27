@@ -249,6 +249,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     <div><div class="hd">Your party</div><div id="campPlayers" class="campList"></div></div>
     <div><div class="hd">Parties at this camp</div><div id="campRooms" class="campList"></div></div>
     <div id="campAdm"></div>
+    <div id="campAdmTools"></div>
     <div class="row" style="gap:8px"><button class="btn" id="campLeave" hidden>Leave party <kbd>L</kbd></button><button class="btn" id="campLobby">Lobby</button></div>
   </div></div>
   <button class="btn" id="chatToggle" hidden>Chat <kbd>T</kbd></button>
@@ -265,7 +266,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     <button class="btn" id="mSettings">Settings</button>
     <button class="btn" id="mTutorial">Replay tutorial</button>
     <button class="btn danger" id="mLobby">Return to lobby</button>
-    <div id="admMenu" class="row" style="gap:8px;flex-wrap:wrap" hidden><button class="btn" id="mSkip">Skip wave</button><button class="btn" id="mEnd">End match</button><button class="btn danger" id="mPurge">Purge chat</button></div>
+    <div id="admMenu" class="row" style="gap:8px;flex-wrap:wrap"><button class="btn" id="mSkip">Skip wave</button><button class="btn" id="mEnd">End match</button><button class="btn" id="mFly">Fly</button><button class="btn" id="mSpec">Spectate</button><button class="btn" id="mWallet">Max scrap</button><button class="btn danger" id="mPurge">Purge chat</button></div>
   </div></div>
   <div class="modal" id="settings" hidden><div class="card" id="setCard"></div></div>
   <div class="modal" id="endScreen" hidden><div class="card">
@@ -355,18 +356,21 @@ const MAXP=6;
 /* ============ presence & network ============ */
 const others=()=>S.peers.filter(p=>!p.sameTab&&p.kind!=='agent');
 const peerById=id=>S.peers.find(p=>p.peer===id);
+const hostHR=()=>({id:S.rm.id,code:S.rm.code,pub:S.rm.pub?1:0,st:S.rm.st,max:S.rm.max||MAXP,gid:S.rm.gid,df:S.rm.df||'normal',map:S.rm.map||null,lc:S.rm.lc||null,ar:S.rm.armed?1:0});
 function myPresence(){if(!Prof.name)return{n:null};
  const p={n:Prof.name,c:Prof.color,rm:S.rm?S.rm.id:null,rdy:S.rdy?1:0,vw:S.view};
  p.eq=eqStr();if(S.view==='camp')p.pd=S.pad||null;
  if(S.view==='game'||S.view==='camp'){p.x=+PL.x.toFixed(2);p.z=+PL.z.toFixed(2);p.y=+PL.y.toFixed(2);p.r=+PL.face.toFixed(2);p.mv=PL.moving>.5?1:0}
- if(S.rm&&S.rm.isHost){p.hr={id:S.rm.id,code:S.rm.code,pub:S.rm.pub?1:0,st:S.rm.st,max:S.rm.max||MAXP,gid:S.rm.gid,df:S.rm.df||'normal',map:S.rm.map||null,lc:S.rm.lc||null,ar:S.rm.armed?1:0};if(S.rm.st==='play'&&H){p.gs=snapshot();let js=JSON.stringify(p);if(js.length>3800){p.gs.t=p.gs.t.map(t=>t?[t[0],t[1],t[2],t[3],'',t[5],t[6],t[7],t[8]]:0);p.gs.e=p.gs.e.map(e=>[e[0],e[1],Math.round(e[2]*10)/10,e[3],e[4],e[5]]);js=JSON.stringify(p)}while(js.length>3800&&p.gs.e.length){p.gs.e=p.gs.e.slice(0,Math.floor(p.gs.e.length*.85));js=JSON.stringify(p)}}}
+ if(S.rm&&S.rm.isHost){p.hr=hostHR();if(S.rm.st==='play'&&H){p.gs=snapshot();let js=JSON.stringify(p);if(js.length>3800){p.gs.t=p.gs.t.map(t=>t?[t[0],t[1],t[2],t[3],'',t[5],t[6],t[7],t[8]]:0);p.gs.e=p.gs.e.map(e=>[e[0],e[1],Math.round(e[2]*10)/10,e[3],e[4],e[5]]);js=JSON.stringify(p)}while(js.length>3800&&p.gs.e.length){p.gs.e=p.gs.e.slice(0,Math.floor(p.gs.e.length*.85));js=JSON.stringify(p)}}}
  return p}
 function pushPresence(force){if(!S.room)return;const t=performance.now();if(!force&&t-S.lastPres<90)return;S.lastPres=t;
  S.room.presence(Object.assign({n:null,c:null,rm:null,rdy:null,vw:null,x:null,z:null,y:null,r:null,mv:null,hr:null,gs:null,pd:null,eq:null},myPresence())).catch(()=>{})}
 const handlers={};
 function send(topic,data){if(S.room&&S.room.connected())S.room.emit(topic,data).catch(()=>{});else{const fn=handlers[topic];if(fn)fn({data,peer:S.myPeer,sameTab:true})}}
 function roomMembers(){if(!S.rm)return[];const me={peer:S.myPeer,me:true,presence:myPresence()};return[me].concat(others().filter(p=>p.presence&&p.presence.rm===S.rm.id&&p.presence.n))}
-function hostedRooms(){return others().filter(p=>p.presence&&p.presence.hr&&p.presence.hr.id&&p.presence.hr.st!=='closed').map(p=>({peer:p.peer,name:String(p.presence.n||'Host'),hr:p.presence.hr,count:1+others().filter(q=>q.presence&&q.presence.rm===p.presence.hr.id&&q.peer!==p.peer).length}))}
+function hostedRooms(){const out=others().filter(p=>p.presence&&p.presence.hr&&p.presence.hr.id&&p.presence.hr.st!=='closed').map(p=>({peer:p.peer,name:String(p.presence.n||'Host'),hr:p.presence.hr,count:1+others().filter(q=>q.presence&&q.presence.rm===p.presence.hr.id&&q.peer!==p.peer).length}));
+ if(S.rm&&S.rm.isHost&&S.rm.st!=='closed')out.push({peer:S.myPeer,me:true,name:Prof.name||'Host',hr:hostHR(),count:roomMembers().length});
+ return out}
 async function initCaps(){
  if(!window.claude||typeof window.claude.use!=='function'){S.capsReady=true;renderLobby();return}
  const room=await claude.use('room');S.room=room;S.capsReady=true;
@@ -396,8 +400,10 @@ function leaveParty(){const wasHost=!!(S.rm&&S.rm.isHost);if(wasHost)S.rm.st='cl
  S.rm=null;S.rdy=false;H=null;S.chat=[];renderChat();pushPresence(true);campHudLast=0;toast(wasHost?'Your party is closed.':'You left the party.')}
 function allReady(){return roomMembers().every(m=>m.me||m.presence.rdy)}
 function startGame(map){const r=S.rm;if(!r||!r.isHost)return;r.map=map||r.map||'outpost';r.lc=null;r.gid++;r.st='play';initGame();pushPresence(true);enterGame()}
-handlers.req=m=>{const d=m.data||{};if(!S.rm||!S.rm.isHost||d.rm!==S.rm.id)return;if(!m.sameTab){const p=peerById(m.peer);if(!p||!p.presence||p.presence.rm!==S.rm.id)return}hostAction(m.sameTab?S.myPeer:m.peer,d)};
-function request(a,extra){const d=Object.assign({rm:S.rm&&S.rm.id,a},extra||{});if(S.rm&&S.rm.isHost)hostAction(S.myPeer,d);else send('req',d)}
+handlers.req=m=>{const d=m.data||{};if(!S.rm||!S.rm.isHost||d.rm!==S.rm.id)return;
+ // party members act on their own host; an unlocked admin may act on any party in camp
+ if(!m.sameTab){const p=peerById(m.peer);if(!p)return;if(!((p.presence||{}).rm===S.rm.id)&&!isAdminPeer(m.peer))return}hostAction(m.sameTab?S.myPeer:m.peer,d)};
+function request(a,extra,rm){const id=rm||(S.rm&&S.rm.id);const d=Object.assign({rm:id,a},extra||{});if(S.rm&&S.rm.isHost&&id===S.rm.id)hostAction(S.myPeer,d);else send('req',d)}
 function isAdminPeer(peer){return peer===S.myPeer?!!S.admin:!!((peerById(peer)||{}).admin)}
 function applyAdmin(){
  if(!S.admin)return;
@@ -1091,6 +1097,34 @@ function renderPadPop(){const pad=padPopPad;if(!pad)return;const D=MAPS[pad],r=S
  l.hidden=!r;l.innerHTML='';l.append(document.createTextNode(r&&r.map===pad?'Leave this party':'Leave your party'),h('kbd',{text:'L'}))}
 function openCampPanel(){if(S.view!=='camp')return;$('#campPanel').hidden=false;S.panel='camp';if(document.pointerLockElement)document.exitPointerLock();renderCampPanel();updateLockHint()}
 function closeCampPanel(){$('#campPanel').hidden=true;if(S.panel==='camp')S.panel=null;updateLockHint();if(S.view==='camp'&&!padPopPad)lockPointer()}
+function miniSel(opts,val,onch){const s=h('select',{class:'field',style:'width:auto;padding:3px 7px;font-size:11px'});
+ for(const o of opts){const el=h('option',{value:String(o.v)},o.t);if(o.v===val)el.selected=true;s.append(el)}
+ s.onchange=()=>onch(s.value);return s}
+const tiny=text=>({class:'btn',style:'padding:2px 7px;font-size:11px',text});
+function adminPartyTools(x){if(!S.room)return null;const live=x.hr.st==='play';
+ const btns=[h('button',Object.assign(tiny('kick host'),{onclick:()=>{S.room.kick(x.peer);toast('Kicked that host.')}}))];
+ if(live)btns.push(h('button',Object.assign(tiny('fill scrap'),{onclick:()=>{request('gold',{},x.hr.id);toast('Gave that party 999999 scrap.')}})));
+ if(live)btns.push(h('button',Object.assign(tiny('skip wave'),{onclick:()=>{request('skip',{},x.hr.id);toast('Skipped a wave over there.')}})));
+ if(live)btns.push(h('button',Object.assign(tiny('end match'),{class:'btn danger',style:'padding:2px 7px;font-size:11px',onclick:()=>{request('end',{},x.hr.id);toast('Ended that match.')}})));
+ return h('div',{style:'display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:2px 0 6px'},
+  h('span',{class:'muted',style:'font-size:11px',text:'as admin:'}),
+  miniSel([...Array(MAXP)].map((_,i)=>({v:i+1,t:(i+1)+'p'})),x.hr.max||MAXP,v=>request('settings',{max:+v},x.hr.id)),
+  miniSel(Object.entries(DIFF).map(([k,D])=>({v:k,t:D.name})),x.hr.df||'normal',v=>request('settings',{df:v},x.hr.id)),
+  ...btns)}
+function adminBtn(label,fn,cls){return h('button',{class:cls||'btn',style:'padding:4px 9px;font-size:12px',onclick:fn,text:label})}
+function specTargets(){return others().filter(p=>p.presence&&p.presence.rm&&p.presence.rm===(S.rm&&S.rm.id)&&p.presence.n&&p.presence.vw==='game').map(p=>p.peer)}
+function cycleSpectate(){if(S.view!=='game'){toast('Spectating only works while a match is running.');return}
+ const t=specTargets(),i=t.indexOf(S.spectate);S.spectate=i+1<t.length?t[i+1]:null;
+ toast(S.spectate?'Spectating '+String(((peerById(S.spectate)||{}).presence||{}).n||'survivor'):'Spectating off')}
+function adminToolsBar(){const box=$('#campAdmTools');if(!S.admin){box.hidden=true;box.replaceChildren();return}
+ box.hidden=false;
+ box.replaceChildren(h('div',{class:'hd',text:'Admin powers'}),
+  h('div',{class:'row',style:'gap:6px;flex-wrap:wrap'},
+   adminBtn('Purge chat',()=>{if(S.room)S.room.purge();S.chat=[];renderChat();toast('Chat cleared for everyone nearby.')}),
+   adminBtn('Max coins, gear, sentries',()=>{applyAdmin();toast('Wallet, gear and sentries maxed.')}),
+   adminBtn(S.fly?'Fly: on':'Fly: off',()=>{S.fly=!S.fly;toast(S.fly?'Fly armed — press F inside a match, Space up, Shift down':'Fly off')}),
+   adminBtn('Spectate next',()=>{cycleSpectate();adminToolsBar()})),
+  h('div',{class:'muted',style:'font-size:11px',text:'Inside a match the Esc menu also has Skip wave, End match and Purge chat. Keys: F fly, V spectate, T chat, L leaves a party.'}))}
 function renderCampPanel(){const r=S.rm,parts=hostedRooms(),mem=r?roomMembers():[];
  const campers=others().filter(p=>p.presence&&p.presence.n&&p.presence.vw==='camp');
  $('#campOnline').textContent=(campers.length+1)+' in camp · '+parts.length+' open '+(parts.length===1?'party':'parties');
@@ -1102,20 +1136,23 @@ function renderCampPanel(){const r=S.rm,parts=hostedRooms(),mem=r?roomMembers():
  if(pl.dataset.psig!==psig){pl.dataset.psig=psig;pl.replaceChildren(...rows.map(campRow))}
  const cl=$('#campRooms'),csig=parts.map(x=>[x.peer,x.hr.id,x.count,x.hr.max||MAXP,x.hr.st||'',x.hr.df||'',x.hr.map,shortName(x.name),r&&r.id===x.hr.id?'me':'',S.admin?'a':''].join('~')).join(';')+'|'+(r?r.id:'')+S.admin;
  if(cl.dataset.csig!==csig){cl.dataset.csig=csig;cl.replaceChildren(...(parts.length?parts.map(x=>{const full=x.count>=(x.hr.max||MAXP),mine=!!(r&&r.id===x.hr.id);
-  return h('div',null,h('span',{class:'dot',style:'background:'+safeColor(String((peerById(x.peer)||{presence:{}}).presence.c||''))}),h('span',{text:shortName(x.name)+(mine?' (you)':'')}),
+  const row=h('div',null,h('span',{class:'dot',style:'background:'+safeColor(String((peerById(x.peer)||{presence:{}}).presence.c||''))}),h('span',{text:shortName(x.name)+(mine?' (you)':'')}),
    h('span',{class:'muted',text:(MAPS[x.hr.map]?MAPS[x.hr.map].name:'?')+' · '+(DIFF[x.hr.df]||DIFF.normal).name}),
    h('span',{class:'muted',style:'margin-left:auto',text:x.count+'/'+(x.hr.max||MAXP)+(x.hr.st==='play'?' · live':'')}),
-   mine?null:h('button',{class:'btn',style:'padding:2px 7px;font-size:11px',disabled:full&&!S.admin,onclick:()=>{joinParty(x);renderCampPanel()},text:full?'full':'join'}))})
+   mine?null:h('button',{class:'btn',style:'padding:2px 7px;font-size:11px',disabled:full&&!S.admin,onclick:()=>{joinParty(x);renderCampPanel()},text:full?'full':'join'}));
+  const tools=S.admin&&!mine?adminPartyTools(x):null;
+  return tools?h('div',{style:'display:flex;flex-direction:column;align-items:stretch;gap:0'},row,tools):row})
   :[h('div',{class:'muted',text:'None yet — step onto a deploy zone'})]))}
  const admEl=$('#campAdm'),wantAdm=!!(Prof.name&&Prof.name.toLowerCase()==='sapnap'&&!S.admin);
  if(wantAdm&&!admEl.dataset.on){admEl.dataset.on='1';admEl.replaceChildren(...adminUnlockRow())}
  else if(!wantAdm&&admEl.dataset.on){delete admEl.dataset.on;admEl.replaceChildren()}
+ adminToolsBar();
  $('#campLeave').hidden=!r}
 function shortName(n){n=String(n||'Survivor');return n.length>10?n.slice(0,9)+'…':n}
 function campRow(c){return h('div',null,h('span',{class:'dot',style:'background:'+safeColor(c.color)}),shortName(c.name),
  c.admin?h('span',{class:'tag host',text:'admin'}):null,c.host?h('span',{class:'muted',text:'host'}):null,c.me?h('span',{class:'muted',text:'you'}):null,
  h('span',{class:'muted',style:'margin-left:auto',text:c.pad?MAPS[c.pad].name:'camp'}),
- (S.admin&&!c.me&&S.rm)?h('button',{class:'btn danger',style:'padding:2px 7px;font-size:11px',onclick:()=>{if(S.room)S.room.kick(c.peer)},text:'kick'}):null)}
+ (S.admin&&!c.me)?h('button',{class:'btn danger',style:'padding:2px 7px;font-size:11px',onclick:()=>{if(S.room)S.room.kick(c.peer)},text:'kick'}):null)}
 $('#padMax').onchange=e=>{const v=clamp(+e.target.value,1,MAXP);if(!S.rm){prefs.cap=v;savePrefs()}else if(S.rm.isHost){S.rm.max=v;pushPresence(true)}else if(S.admin)request('settings',{max:v})};
 $('#padDiff').onchange=e=>{const v=e.target.value;if(!S.rm){prefs.df=v;savePrefs()}else if(S.rm.isHost){S.rm.df=v;pushPresence(true)}else if(S.admin)request('settings',{df:v})};
 $('#padOpen').onclick=()=>{openParty(padPopPad||S.pad);renderPadPop()};
@@ -1136,9 +1173,8 @@ $('#chatIn').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Ente
 
 function nearCrate(){let b=null,bd=2.2;for(const c of CRATE_SPOTS){const d=Math.hypot(PL.x-c.x,PL.z-c.z);if(d<bd){bd=d;b=c}}return b}
 function campInteract(){if(OPEN&&OPEN.popped&&Math.hypot(PL.x-OPEN.spot.x,PL.z-OPEN.spot.z)<4){closeOpen();return}
- if(S.pad){const open=hostedRooms().filter(x=>x.hr.map===S.pad);const j=open.find(x=>x.count<(x.hr.max||MAXP))||open[0];
+ if(S.pad){const open=hostedRooms().filter(x=>x.hr.map===S.pad&&x.peer!==S.myPeer);const j=open.find(x=>x.count<(x.hr.max||MAXP))||open[0];
   if(!j){if(!S.rm)openParty(S.pad);else if(S.rm.map!==S.pad)toast('You are in a party on '+MAPS[S.rm.map].name+'. Leave it in the panel to open one here.');return}
-  if(j.peer===S.myPeer)return;
   if(j.count>=(j.hr.max||MAXP)&&!S.admin){toast('That party is full.');return}
   joinParty(j);return}
  const c=nearCrate();if(c){buyCrate3D(c);return}if(LOCKER&&Math.hypot(PL.x-LOCKER.x,PL.z-LOCKER.z)<1.9)openShop()}
@@ -1170,9 +1206,10 @@ function simHost(dt){if(!H||H.st!=='play')return;const tn=now();if(S.admin)H.gol
  H.en=H.en.filter(e=>!e.done);
  if(H.base<=0){H.st='lost';pushPresence(true);return}
  if(!H.q.length&&!H.en.length){H.wd=H.wave;H.gold+=40+10*H.wave;if(H.wave>=H.wt)H.st='won';else{H.phase='count';H.cdEnd=tn+20000}pushPresence(true)}}
-function hostAction(peer,d){if(!H)return;const say=m=>{if(peer===S.myPeer)toast(m)};const adm=isAdminPeer(peer);
+function hostAction(peer,d){const say=m=>{if(peer===S.myPeer)toast(m)};const adm=isAdminPeer(peer);
+ if(d.a==='settings'){if(!S.rm)return;if(!adm&&peer!==S.myPeer)return;if(d.max!=null)S.rm.max=clamp(+d.max||MAXP,1,MAXP);if(d.map!==undefined)S.rm.map=d.map||null;if(d.df&&DIFF[d.df])S.rm.df=d.df;pushPresence(true);return}
+ if(!H)return;
  if(d.a==='again'){if(H.st!=='play'){S.rm.gid++;initGame();pushPresence(true)}return}
- if(d.a==='settings'){if(!adm&&peer!==S.myPeer)return;if(d.max!=null)S.rm.max=clamp(+d.max||MAXP,1,MAXP);if(d.map!==undefined)S.rm.map=d.map||null;if(d.df&&DIFF[d.df])S.rm.df=d.df;pushPresence(true);return}
  if(adm&&d.a==='gold'){H.gold=Math.max(H.gold||0,999999);pushPresence(true);return}
  if(adm&&d.a==='skip'){if(H.st!=='play')return;H.q=[];H.en=[];H.gren=[];pushPresence(true);return}
  if(adm&&d.a==='end'){H.q=[];H.en=[];H.wave=H.wt;H.st='won';pushPresence(true);return}
@@ -1365,9 +1402,12 @@ $('#mTutorial').onclick=()=>{$('#menu').hidden=true;S.panel=null;startTutorial()
 $('#mLobby').onclick=()=>exitGame(S.rm&&S.rm.isHost?'Match ended. You are back in the room lobby.':null);
 $('#mSkip').onclick=()=>{request('skip');$('#menu').hidden=true;S.panel=null;lockPointer()};
 $('#mEnd').onclick=()=>{request('end');$('#menu').hidden=true;S.panel=null};
-$('#mPurge').onclick=()=>{if(S.room)S.room.purge();toast('Chat purged.')};
+$('#mPurge').onclick=()=>{if(S.room)S.room.purge();S.chat=[];renderChat();toast('Chat purged.')};
+$('#mFly').onclick=()=>{S.fly=!S.fly;$('#mFly').textContent=S.fly?'Fly: on (Space up, Shift down)':'Fly: off';toast(S.fly?'Flying — Space up, Shift or C down':'On the ground')};
+$('#mSpec').onclick=()=>{cycleSpectate();$('#menu').hidden=true;S.panel=null;lockPointer()};
+$('#mWallet').onclick=()=>{applyAdmin();request('gold');toast('Team scrap topped up.')};
 $('#btnMenu').onclick=()=>openMenu();
-function openMenu(){if(S.view!=='game'||S.panel==='end')return;$('#admMenu').hidden=!S.admin;$('#menu').hidden=false;S.panel='menu';closeSide();if(document.pointerLockElement)document.exitPointerLock();updateLockHint()}
+function openMenu(){if(S.view!=='game'||S.panel==='end')return;$('#admMenu').hidden=!S.admin;$('#mFly').textContent=S.fly?'Fly: on (Space up, Shift down)':'Fly: off';$('#menu').hidden=false;S.panel='menu';closeSide();if(document.pointerLockElement)document.exitPointerLock();updateLockHint()}
 function closeMenus(){$('#menu').hidden=true;$('#settings').hidden=true;S.panel=null;updateLockHint()}
 
 /* ============ input ============ */
