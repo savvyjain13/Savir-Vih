@@ -1237,7 +1237,9 @@ function renderPadPop(){const pad=padPopPad;if(!pad)return;const r=S.rm,here=pad
  else noteTxt='Pick a destination, then open the party. Everyone on this zone when the '+(BOARD/1000)+' second window closes deploys together.';
  $('#padNote').textContent=noteTxt;
  const mpEl=$('#padMap'),capEl=$('#padMax'),ds=$('#padDiff'),canSet=mineHere?(r.isHost||S.admin):!r;
- const lockSel=(el,text)=>{if(el.dataset.lock!==text){el.dataset.lock=text;el.replaceChildren(h('option',{text}));el.disabled=true}};
+ const lockSel=(el,text)=>{if(el.dataset.lock!==text){el.dataset.lock=text;el.replaceChildren(h('option',{text}));el.disabled=true}
+  // Drop the rebuild signatures: the locked placeholder replaced the real options, so the next open render must repopulate.
+  delete el.dataset.mk;delete el.dataset.sig;delete el.dataset.hk};
  if(r&&!mineHere){lockSel(mpEl,'leave your party first');lockSel(capEl,'leave your party first');lockSel(ds,'leave your party first')}
  else if(!canSet){lockSel(mpEl,((MAPS[r.map]||{}).name||'?')+' (host picks)');lockSel(capEl,(r.max||MAXP)+' players (host picks)');lockSel(ds,(DIFF[r.df]||DIFF.normal).name+' (host picks)')}
  else{delete mpEl.dataset.lock;delete capEl.dataset.lock;delete ds.dataset.lock;
@@ -1559,7 +1561,9 @@ function resetPlayer(){PL.x=PSPAWN.x+rnd(-1,1);PL.z=PSPAWN.z+rnd(-1,1);PL.y=0;PL
 let startTutorialNext=false;
 function enterGame(){loadMap((S.rm&&S.rm.map)||'outpost');$('#campHud').hidden=true;$('#prompt').hidden=true;$('#chatToggle').hidden=chatOpen;S.view='game';$('#lobby').hidden=true;$('#hud').hidden=false;$('#endScreen').hidden=true;$('#menu').hidden=true;S.panel=null;padPopPad=null;padPopSeen=null;$('#padPop').hidden=true;$('#campPanel').hidden=true;clearVisuals();resetPlayer();V_last=null;updateLockHint();pushPresence(true);
  if(startTutorialNext||!store.get('tutDone',false)){startTutorialNext=false;setTimeout(startTutorial,900)}}
-function exitGame(msg){S.spectate=null;$('#chatBox').hidden=true;chatOpen=false;const wasHost=S.rm&&S.rm.isHost;if(wasHost&&S.rm.st==='play'){S.rm.st='closed';H=null}if(S.rm&&!wasHost){S.leftGid=S.rm.gid;S.rdy=false}
+function exitGame(msg){S.spectate=null;$('#chatBox').hidden=true;chatOpen=false;const wasHost=S.rm&&S.rm.isHost;
+ // Parties live only for one match: announce the closure, then drop the object so walking onto a zone is free again.
+ if(wasHost&&S.rm.st==='play'){S.rm.st='closed';H=null;pushPresence(true);S.rm=null}if(S.rm&&!wasHost){S.leftGid=S.rm.gid;S.rdy=false}
  S.view='lobby';closeSide();endTutorial(true);if(document.pointerLockElement)document.exitPointerLock();$('#hud').hidden=true;$('#endScreen').hidden=true;$('#menu').hidden=true;$('#lockhint').hidden=true;$('#chatToggle').hidden=true;S.panel=null;padPopPad=null;padPopSeen=null;$('#padPop').hidden=true;$('#campPanel').hidden=true;
  clearVisuals();for(const [,A] of RAV)scene.remove(A.ch.g);RAV.clear();if(PL.avatar){scene.remove(PL.avatar.g);PL.avatar=null}
  if(Prof.name)enterCamp();else{$('#lobby').hidden=false;loadMap('camp');renderLobby()}pushPresence(true);if(msg)toast(msg)}
@@ -1663,6 +1667,10 @@ function renderUpd(){const bar=$('#updBar');const left=updAt?updAt-Date.now():1;
  else{bar.hidden=true;return}
  bar.hidden=false;$('#updTxt').textContent=txt;$('#updNote').textContent=note}
 checkUpdate();setInterval(checkUpdate,20000);setInterval(renderUpd,1000);
+// A hidden tab gets its requestAnimationFrame paused by the browser, so presence, the party watchdog and the
+// boarding window would all silently stop while your friends kept playing without you. Keep the logic ticking.
+setInterval(()=>{if(!document.hidden||S.view==='lobby')return;pushPresence();
+ if(S.view==='camp')campTick(0);watchdog()},500);
 window.addEventListener('resize',resizeGL);
 (function boot(){if(typeof THREE==='undefined'){document.body.append(h('div',{id:'glerr'},h('h2',{text:'The 3D engine could not load. Check your connection and reload.'})));return}
  try{initGL()}catch(e){console.error(e);document.body.append(h('div',{id:'glerr'},h('h2',{text:'This game needs WebGL. Try an up-to-date Chrome, Edge, Firefox or Safari.'})));return}
