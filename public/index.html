@@ -11,7 +11,7 @@
 <script>
 /* Render connector: gives the game the same room API it uses on claude.ai, backed by this site's own WebSocket server. */
 (function(){if(window.claude)return;
- const peerCbs=[],connCbs=[],topicCbs={},chatCbs=[],authCbs=[],kickCbs=[];let ws=null,me=null,connected=false,list=[],myPres={},retry=0,flushT=null,myAdmin=false,kicked=false;const seen=new Map();
+ const peerCbs=[],connCbs=[],topicCbs={},chatCbs=[],authCbs=[],kickCbs=[];let ws=null,me=null,connected=false,list=[],myPres={},retry=0,flushT=null,myAdmin=false,kicked=false,admCred=null;const seen=new Map();
  const url=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
  function setConn(c){if(connected===c)return;connected=c;connCbs.forEach(f=>{try{f(c)}catch(e){console.error(e)}})}
  function deliver(next){const prev=new Map(list.map(p=>[p.peer,p])),nm=new Map(next.map(p=>[p.peer,p]));
@@ -23,7 +23,7 @@
  function connect(){try{ws=new WebSocket(url)}catch(e){setTimeout(connect,2000);return}
   ws.onopen=()=>{retry=0};
   ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data)}catch(e){return}
-   if(m.t==='welcome'){me=m.peer;ws.send(JSON.stringify({t:'presence',p:myPres}));setConn(true)}
+   if(m.t==='welcome'){me=m.peer;ws.send(JSON.stringify({t:'presence',p:myPres}));if(admCred)ws.send(JSON.stringify({t:'auth',user:admCred.u,pass:admCred.p}));setConn(true)}
    else if(m.t==='peers')deliver(fromServer(m.peers||[]));
    else if(m.t==='authok'){myAdmin=!!m.admin;authCbs.forEach(f=>{try{f(myAdmin)}catch(e){console.error(e)}})}
    else if(m.t==='chat')chatCbs.forEach(f=>{try{f(m)}catch(e){console.error(e)}})
@@ -37,7 +37,10 @@
   onConnection(f){connCbs.push(f);setTimeout(()=>f(connected),0);return()=>{}},
   on(t,f){(topicCbs[t]=topicCbs[t]||[]).push(f);return()=>{}},
   emit(t,d){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'emit',topic:t,data:d}));return Promise.resolve()},
-  auth(user,pass){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'auth',user:user,pass:pass}));return Promise.resolve()},
+  // A credential entered while the socket is still down is kept and replayed on the next 'welcome',
+  // so waking a sleeping server does not swallow the unlock. Clearing it (empty user) revokes for good.
+  auth(user,pass){const u=String(user||'');admCred=u?{u,p:String(pass||'')}:null;const open=!!(ws&&ws.readyState===1);
+   if(open)ws.send(JSON.stringify({t:'auth',user:u,pass:String(pass||'')}));return Promise.resolve(open)},
   onAuth(f){authCbs.push(f);setTimeout(()=>f(myAdmin),0);return()=>{}},
   isAdmin(){return myAdmin},
   chat(text){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'chat',text:text}))},
@@ -463,7 +466,9 @@ let wdLast=0;function watchdog(){const t=performance.now();if(t-wdLast<250)retur
 /* ============ lobby UI ============ */
 let lobbyErr='',lobbyDirty=false;
 function adminUnlockRow(){const pw=h('input',{class:'field',id:'admPass',type:'password',placeholder:'Admin password',autocomplete:'off'});
- const unlock=()=>{if(!S.room){toast('Connect to the multiplayer server first.');return}authTried=true;S.room.auth('Sapnap',pw.value)};
+ const unlock=()=>{if(!S.room){toast('Multiplayer is not available in this copy of the game.');return}
+  authTried=true;S.room.auth('Sapnap',pw.value);
+  toast(S.room.connected()?'Checking the admin password…':'The camp server is still waking up - you will unlock the moment it answers.')}
  pw.addEventListener('keydown',e=>{if(e.key==='Enter')unlock()});
  return [h('div',{class:'hd',style:'margin-top:8px',text:'Admin unlock'}),h('div',{class:'row'},h('div',{style:'flex:1'},pw),h('button',{class:'btn primary',onclick:unlock,text:'Unlock'})),h('div',{class:'muted',text:'The Sapnap account is password protected.'})]}
 function renderLobby(){if(S.view!=='lobby')return;const card=$('#lobbyCard');const ae=document.activeElement;if(ae&&card.contains(ae)&&ae.tagName==='INPUT'){lobbyDirty=true;return}
@@ -1180,7 +1185,7 @@ function campTick(dt){S.pad=padOf(PL.x,PL.z);const r=S.rm;
  const campers=others().filter(p=>p.presence&&p.presence.n&&p.presence.vw==='camp');
  $('#campStatus').textContent=(lc?('Launching '+MAPS[lc.map].name+' in '+Math.max(0,Math.ceil((lc.at-now())/1000))+'s')
   :(r?('Party on '+(MAPS[r.map]?MAPS[r.map].name:'?')+' · '+mem.length+'/'+(r.max||MAXP)+' · '+(r.st==='play'?'match running':(mem.length&&pads.every(p=>p===r.map)?((r.armed||mem.length>=(r.max||MAXP))?'launching':'holding for players'):'everyone stand on the pad')+' · L leaves')+' · code '+r.code)
-   :'Walk onto a deploy zone to set up a party'))+' · '+(campers.length+1)+' in camp';
+   :'Walk onto a deploy zone to set up a party'))+' · '+(S.connected?campers.length+1+' in camp':'offline - nobody can see you');
  $('#campJoin').hidden=!(r&&r.st==='play'&&!r.isHost&&S.pad===r.map);
  $('#campScrap').textContent=Prof.coins||0;
  if(padPopPad)renderPadPop();
@@ -1260,7 +1265,7 @@ function adminToolsBar(){const box=$('#campAdmTools');if(!S.admin){box.hidden=tr
   h('div',{class:'muted',style:'font-size:11px',text:'Inside a match the Esc menu also has Skip wave, End match and Purge chat. Keys: F fly, V spectate, T chat, L leaves a party.'}))}
 function renderCampPanel(){const r=S.rm,parts=hostedRooms(),mem=r?roomMembers():[];
  const campers=others().filter(p=>p.presence&&p.presence.n&&p.presence.vw==='camp');
- $('#campOnline').textContent=(campers.length+1)+' in camp · '+parts.length+' open '+(parts.length===1?'party':'parties');
+ $('#campOnline').textContent=(S.connected?campers.length+1+' in camp':'offline - nobody can see you')+' · '+parts.length+' open '+(parts.length===1?'party':'parties');
  $('#campScrap2').textContent=Prof.coins||0;
  const rows=r?mem.map(m=>({peer:m.peer,me:!!m.me,name:String(m.presence.n||'Survivor'),color:m.presence.c,admin:m.me?S.admin:!!((peerById(m.peer)||{}).admin),host:m.me?r.isHost:m.peer===r.hostPeer,pad:m.me?S.pad:(m.presence.pd||null)}))
   :[{peer:S.myPeer,me:true,name:Prof.name||'You',color:Prof.color,admin:S.admin,host:false,pad:S.pad}]
