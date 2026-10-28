@@ -249,15 +249,15 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 
 
   <div id="campHud" hidden>
-    <div class="card" id="campTop"><div id="campStatus">Stand on a launch pad together to deploy</div><button class="btn go" id="campJoin" hidden>Join the running match</button></div>
+    <div class="card" id="campTop"><div id="campStatus">Walk onto a deploy zone to open a boarding party</div><button class="btn go" id="campJoin" hidden>Rejoin your match</button></div>
     <div class="campBtns"><div class="card" id="campWallet"><span class="coinic"></span><span id="campScrap">0</span><small>coins</small></div><button class="btn" id="campPanelBtn">Party</button><button class="btn" id="campSettings">Settings</button></div>
   </div>
   <div class="modal" id="padPop" hidden><div class="card">
     <div class="row" style="justify-content:space-between;align-items:center"><h2 id="padTitle">Deploy zone</h2><span class="muted" id="padWho"></span></div>
     <div class="muted" id="padNote"></div>
-    <div class="row" style="gap:10px"><div style="flex:1"><div class="hd">Players</div><select class="field" id="padMax"></select></div><div style="flex:1"><div class="hd">Difficulty</div><select class="field" id="padDiff"></select></div></div>
-    <div><div class="hd">Parties on this pad</div><div id="padRooms" class="campList"></div></div>
-    <div class="row" style="gap:8px"><button class="btn primary" id="padOpen">Open party here</button><button class="btn primary" id="padArm" hidden>Launch now</button><button class="btn go" id="padJoin" hidden>Join the match</button><button class="btn" id="padLeave" hidden>Leave party <kbd>L</kbd></button><button class="btn" id="padClose">Continue</button></div>
+    <div class="row" style="gap:10px"><div style="flex:1.5"><div class="hd">Destination</div><select class="field" id="padMap"></select></div><div style="flex:1"><div class="hd">Players</div><select class="field" id="padMax"></select></div><div style="flex:1"><div class="hd">Difficulty</div><select class="field" id="padDiff"></select></div></div>
+    <div><div class="hd">Boarding on this zone</div><div id="padRooms" class="campList"></div></div>
+    <div class="row" style="gap:8px"><button class="btn primary" id="padOpen">Open boarding party</button><button class="btn primary" id="padArm" hidden>Deploy now</button><button class="btn go" id="padJoin" hidden>Rejoin your match</button><button class="btn" id="padLeave" hidden>Leave party <kbd>L</kbd></button><button class="btn" id="padClose">Continue</button></div>
   </div></div>
   <div class="modal" id="campPanel" hidden><div class="card">
     <div class="row" style="justify-content:space-between;align-items:center"><h2>Camp</h2><div class="row" style="gap:8px"><span class="coinic"></span><b id="campScrap2">0</b><button class="btn" id="campPanelClose">Close</button></div></div>
@@ -363,7 +363,7 @@ let Prof=Object.assign({name:'',color:COLORS[Math.floor(Math.random()*COLORS.len
 if(validateName(Prof.name))Prof.name='';
 let settings=Object.assign({sens:1,dist:7,quality:'high',invert:false},store.get('settings',{}));
 const saveProf=()=>store.set('prof',Prof),saveSettings=()=>store.set('settings',settings);
-let prefs=Object.assign({cap:6,df:'normal',autoSkip:false},store.get('prefs',{}));const savePrefs=()=>store.set('prefs',prefs);
+let prefs=Object.assign({cap:6,df:'normal',map:'outpost',autoSkip:false},store.get('prefs',{}));const savePrefs=()=>store.set('prefs',prefs);
 
 /* ============ state ============ */
 const S={room:null,myPeer:'local',peers:[],connected:false,view:'lobby',rm:null,rdy:false,lastPres:0,capsReady:false,leftGid:-1,lostSince:0,panel:null,admin:false,chat:[],spectate:null,fly:false,pendingPass:false};
@@ -372,7 +372,7 @@ const MAXP=6;
 /* ============ presence & network ============ */
 const others=()=>S.peers.filter(p=>!p.sameTab&&p.kind!=='agent');
 const peerById=id=>S.peers.find(p=>p.peer===id);
-const hostHR=()=>({id:S.rm.id,code:S.rm.code,pub:S.rm.pub?1:0,st:S.rm.st,max:S.rm.max||MAXP,gid:S.rm.gid,df:S.rm.df||'normal',map:S.rm.map||null,lc:S.rm.lc||null,ar:S.rm.armed?1:0});
+const hostHR=()=>({id:S.rm.id,code:S.rm.code,pub:S.rm.pub?1:0,st:S.rm.st,max:S.rm.max||MAXP,gid:S.rm.gid,df:S.rm.df||'normal',map:S.rm.map||null,pad:S.rm.pad||null,bd:S.rm.boardEnd||0,cr:S.rm.crew||null,ar:S.rm.armed?1:0});
 function myPresence(){if(!Prof.name)return{n:null};
  const p={n:Prof.name,c:Prof.color,rm:S.rm?S.rm.id:null,rdy:S.rdy?1:0,vw:S.view};
  p.eq=eqStr();if(S.view==='camp')p.pd=S.pad||null;
@@ -404,18 +404,19 @@ async function initCaps(){
    if(S.view==='lobby'){$('#chatToggle').hidden=true;exitCamp()}})}
  renderLobby()}
 
-/* ============ deploy parties: opened on a launch pad in the main camp ============ */
+/* ============ boarding parties: opened on a deploy zone, departs when the window closes ============ */
 function needName(){if(!Prof.name){toast('Choose a username first.');const i=$('#nameIn');if(i)i.focus();return true}return false}
-function openParty(pad){if(needName())return;pad=pad||S.pad;if(!pad){toast('Stand on a launch pad first, then open your party there.');return}
- S.chat=[];renderChat();S.rm={id:genId(),code:genCode(),pub:1,isHost:true,hostPeer:S.myPeer,armed:false,st:'lobby',gid:0,df:prefs.df||'normal',max:clamp(+prefs.cap||MAXP,1,MAXP),map:pad,madeAt:now()};
- S.rdy=true;pushPresence(true);campHudLast=0;toast('Party open on '+MAPS[pad].name+' · code '+S.rm.code)}
+function openParty(pad,map,df,max){if(needName())return;pad=pad||S.pad;if(!pad){toast('Walk onto a deploy zone first, then open your party there.');return}
+ if(!MAPS[map])map='outpost';df=DIFF[df]?df:'normal';max=clamp(+max||+prefs.cap||MAXP,1,MAXP);
+ prefs.df=df;prefs.cap=max;prefs.map=map;savePrefs();
+ S.chat=[];renderChat();S.rm={id:genId(),code:genCode(),pub:1,isHost:true,hostPeer:S.myPeer,armed:false,st:'boarding',gid:0,df,map,pad,crew:null,boardEnd:now()+BOARD,madeAt:now()};
+ S.rdy=true;pushPresence(true);campHudLast=0;toast(padName(pad)+' is now yours - '+MAPS[map].name+' · friends have '+BOARD/1000+'s to stand here')}
 function joinParty(r){if(needName())return;if(!S.admin&&r.count>=(r.hr.max||MAXP)){toast('That party is full.');return}
- S.chat=[];renderChat();S.rm={id:r.hr.id,code:r.hr.code,pub:!!r.hr.pub,isHost:false,hostPeer:r.peer,st:r.hr.st,gid:r.hr.gid,df:r.hr.df||'normal',max:r.hr.max||MAXP,map:r.hr.map||null,madeAt:now()};
- S.rdy=true;pushPresence(true);campHudLast=0;toast('Joined '+r.name+"'s party on "+(MAPS[r.hr.map]?MAPS[r.hr.map].name:'that pad'))}
+ S.chat=[];renderChat();S.rm={id:r.hr.id,code:r.hr.code,pub:!!r.hr.pub,isHost:false,hostPeer:r.peer,st:r.hr.st,gid:r.hr.gid,df:r.hr.df||'normal',max:r.hr.max||MAXP,map:r.hr.map||null,pad:r.hr.pad||null,crew:r.hr.cr||null,boardEnd:r.hr.bd||0,madeAt:now()};
+ S.rdy=true;pushPresence(true);campHudLast=0;toast('Boarding '+r.name+"'s party for "+((MAPS[r.hr.map]||{}).name||'the zone')+' · stay on the pad')}
 function leaveParty(){const wasHost=!!(S.rm&&S.rm.isHost);if(wasHost)S.rm.st='closed';if(S.view==='game')exitGame(null);
  S.rm=null;S.rdy=false;H=null;S.chat=[];renderChat();pushPresence(true);campHudLast=0;toast(wasHost?'Your party is closed.':'You left the party.')}
-function allReady(){return roomMembers().every(m=>m.me||m.presence.rdy)}
-function startGame(map){const r=S.rm;if(!r||!r.isHost)return;r.map=map||r.map||'outpost';r.lc=null;r.gid++;r.st='play';initGame();pushPresence(true);enterGame()}
+function deployParty(crew){const r=S.rm;if(!r||!r.isHost||r.st!=='boarding')return;r.crew=crew;r.pad=null;r.armed=false;r.gid++;r.st='play';initGame();pushPresence(true);enterGame()}
 handlers.req=m=>{const d=m.data||{};if(!S.rm||!S.rm.isHost||d.rm!==S.rm.id)return;
  // party members act on their own host; an unlocked admin may act on any party in camp
  if(!m.sameTab){const p=peerById(m.peer);if(!p)return;if(!((p.presence||{}).rm===S.rm.id)&&!isAdminPeer(m.peer))return}hostAction(m.sameTab?S.myPeer:m.peer,d)};
@@ -459,9 +460,11 @@ let wdLast=0;function watchdog(){const t=performance.now();if(t-wdLast<250)retur
  if(lobbyDirty&&S.view==='lobby'){lobbyDirty=false;renderLobby()}
  const r=S.rm;if(!r||r.isHost||!S.room)return;const hp=peerById(r.hostPeer);const hr=hp&&hp.presence&&hp.presence.hr;
  if(!hr||hr.id!==r.id||hr.st==='closed'){if(!S.lostSince)S.lostSince=now();else if(now()-S.lostSince>3500){S.lostSince=0;if(S.view==='game')exitGame(null);S.rm=null;S.rdy=false;pushPresence(true);campHudLast=0;toast('That party closed. You are back in the main camp.')}return}
- S.lostSince=0;r.st=hr.st;r.gid=hr.gid;r.map=hr.map||r.map;r.max=hr.max||MAXP;if(hr.df&&hr.df!==r.df){r.df=hr.df;lobbyDirty=true}
- if(hr.st==='play'&&S.view==='camp'&&hr.gid!==S.leftGid&&S.pad&&S.pad===hr.map)enterGame();
- if(hr.st==='lobby'&&S.view==='game'){exitGame('The host returned to the lobby.')}}
+ S.lostSince=0;r.st=hr.st;r.gid=hr.gid;r.map=hr.map||r.map;r.max=hr.max||MAXP;r.crew=hr.cr||null;r.pad=hr.pad||null;if((hr.bd||0)!==r.boardEnd)r.boardEnd=hr.bd||0;if(hr.df&&hr.df!==r.df){r.df=hr.df;lobbyDirty=true}
+ // Boarding closed: the crew teleports as one. Anyone not standing on the zone when it departed is left in camp.
+ if(hr.st==='play'&&S.view==='camp'&&hr.gid!==S.leftGid){if(hr.cr&&hr.cr.indexOf(S.myPeer)<0){S.leftGid=hr.gid;S.rm=null;S.rdy=false;pushPresence(true);campHudLast=0;toast('That party deployed without you - stand on the zone before the timer hits zero.')}
+  else enterGame()}
+ if(hr.st==='lobby'&&S.view==='game'){exitGame('The host returned to the camp.')}}
 
 /* ============ lobby UI ============ */
 let lobbyErr='',lobbyDirty=false;
@@ -603,6 +606,10 @@ const MAPS={
  farmland:{name:'Farmland',desc:'A long winding farm track past barns and silos. Wide open sightlines.',color:'#5fd0a8',
   wp:[[36,22],[14,22],[14,-6],[-2,-6],[-2,20],[-18,20],[-18,-22],[4,-22]],spawn:[6,6,Math.PI],fog:0x2e3a36,ground:['ground',{rep:[12,12],color:'#6d7d6a'}],road:'road',build:buildFarmland}};
 const MAP_IDS=['outpost','downtown','farmland'];
+const PADC='#f0a830',BOARD=30000;
+// Zones are generic gates (pad0/1/2); the map is a property of the party boarding there, not of the zone.
+const padName=id=>/^pad[0-9]$/.test(String(id||''))?'PAD '+('ABC'[+String(id).slice(3)]||'?'):String(id||'zone');
+const leftSec=bd=>Math.max(0,Math.ceil(((bd||0)-now())/1000));
 TEXDRAW.asphalt=(x,w,hh)=>{x.fillStyle='#3e3e40';x.fillRect(0,0,w,hh);blot(x,w,hh,40,['#4a4a4c','#323234','#46443e'],10,40,.5);speckle(x,w,hh,3000,'#222224',.35);speckle(x,w,hh,1200,'#7a7a78',.2);
  x.strokeStyle='rgba(20,20,20,.7)';x.lineWidth=1.4;for(let i=0;i<5;i++){let cx=R(w),cy=R(hh);x.beginPath();x.moveTo(cx,cy);for(let k=0;k<7;k++){cx+=R(24)-12;cy+=R(24)-12;x.lineTo(cx,cy)}x.stroke()}
  x.fillStyle='rgba(210,180,60,.75)';for(let y=10;y<hh;y+=64)x.fillRect(w/2-3,y,6,34);x.fillStyle='rgba(220,220,210,.55)';x.fillRect(8,0,4,hh);x.fillRect(w-12,0,4,hh)};
@@ -735,14 +742,18 @@ function buildFarmland(sc,rng){
 /* ---------- camp lobby: shop + deploy zone ---------- */
 /* ---------- dystopian city props ---------- */
 const rng0=()=>Math.random();
-function holoBoard(t1,t2,color,w,hh){const t=canvasTex(512,Math.max(72,Math.round(512*hh/w)),(x,W,Hh)=>{x.clearRect(0,0,W,Hh);
- x.fillStyle='rgba(6,16,20,.4)';x.fillRect(0,0,W,Hh);x.strokeStyle=color;x.lineWidth=5;x.strokeRect(8,8,W-16,Hh-16);
- x.globalAlpha=.55;x.fillStyle=color;x.fillRect(8,8,W-16,9);x.globalAlpha=1;
- x.textAlign='center';x.textBaseline='middle';x.shadowColor=color;x.shadowBlur=26;x.fillStyle=color;
- x.font='900 '+Math.round(Hh*.3)+'px "Orbitron", Impact, sans-serif';fitFont(x,t1,W-52);x.fillText(t1,W/2,Hh*(t2?.42:.5));
- if(t2){x.font='600 '+Math.round(Hh*.13)+'px "Chakra Petch", sans-serif';fitFont(x,t2,W-52);x.globalAlpha=.9;x.fillText(t2,W/2,Hh*.72)}});
+function holoBoard(t1,t2,color,w,hh){const st={t1:t1,t2:t2,c:color};
+ const paint=(x,W,Hh)=>{x.clearRect(0,0,W,Hh);
+ x.fillStyle='rgba(6,16,20,.4)';x.fillRect(0,0,W,Hh);x.strokeStyle=st.c;x.lineWidth=5;x.strokeRect(8,8,W-16,Hh-16);
+ x.globalAlpha=.55;x.fillStyle=st.c;x.fillRect(8,8,W-16,9);x.globalAlpha=1;
+ x.textAlign='center';x.textBaseline='middle';x.shadowColor=st.c;x.shadowBlur=26;x.fillStyle=st.c;
+ x.font='900 '+Math.round(Hh*.3)+'px "Orbitron", Impact, sans-serif';fitFont(x,st.t1,W-52);x.fillText(st.t1,W/2,Hh*(st.t2?.42:.5));
+ if(st.t2){x.font='600 '+Math.round(Hh*.13)+'px "Chakra Petch", sans-serif';fitFont(x,st.t2,W-52);x.globalAlpha=.9;x.fillText(st.t2,W/2,Hh*.72)}};
+ const t=canvasTex(512,Math.max(72,Math.round(512*hh/w)),paint);
  const b=new THREE.Mesh(new THREE.PlaneGeometry(w,hh),new THREE.MeshBasicMaterial({map:t,transparent:true,depthWrite:false,side:THREE.DoubleSide,blending:THREE.AdditiveBlending}));
  const g=new THREE.Group();g.add(b);const ph=rng0()*7;MAPANIM.push(()=>{const n=performance.now()/1000;b.material.opacity=.7+.2*Math.sin(n*7+ph)+(Math.random()<.025?-.35:0)});
+ g.setText=(a,c,col)=>{if(st.t1===a&&st.t2===c&&st.c===(col||st.c))return;st.t1=a;st.t2=c;st.c=col||st.c;
+  paint(t.image.getContext('2d'),t.image.width,t.image.height);t.needsUpdate=true};
  return g}
 function towerBlock(sc,x,z,w,d,h){const g=new THREE.Group();g.position.set(x,0,z);g.rotation.y=Math.random()*.5;sc.add(g);
  const b=part(g,box(w,h,d),glassMat(Math.max(2,Math.round(w/1.7)),Math.max(3,Math.round(h/1.9))),0,h/2,0);CAMBLOCK.push(b);
@@ -826,18 +837,18 @@ function buildCamp(sc,rng){scene.fog.color.setHex(0x1b2c34);PSPAWN.x=0;PSPAWN.z=
   for(const s of [-1,1]){const p=part(arch,box(.7,7,.7),col('#141d23',{metalness:.82,roughness:.32}),s*16,3.5,0);CAMBLOCK.push(p);addCirc(s*16,0,.9);
    part(arch,box(.16,6.4,.16),glow('#35d6e8',1.5),s*16,3.5,.42,0,0,0,false);part(arch,box(.9,.14,.9),glow('#f0a830',1.4),s*16,7.1,0,0,0,0,false)}
   part(arch,box(32.8,.5,.5),col('#141d23',{metalness:.82,roughness:.32}),0,7.3,0);
-  const hb=holoBoard('DEPLOY ZONE','STAND ON A PAD TOGETHER TO LAUNCH','#f0a830',11,2.2);hb.position.set(0,5.4,.4);arch.add(hb);
-  MAP_IDS.forEach((id,i)=>{const D=MAPS[id];const x=(i-1)*12;const g=new THREE.Group();g.position.set(x,0,z0);sc.add(g);
+  const hb=holoBoard('DEPLOY ZONES','PICK A MAP - BOARD TOGETHER - GO','#f0a830',11,2.2);hb.position.set(0,5.4,.4);arch.add(hb);
+  ['pad0','pad1','pad2'].forEach((id,i)=>{const x=(i-1)*12;const g=new THREE.Group();g.position.set(x,0,z0);sc.add(g);
    part(g,cyl(2.7,2.9,.24,40),col('#10181d',{metalness:.7,roughness:.4}),0,.12,0,0,0,0,false);
-   part(g,new THREE.TorusGeometry(2.72,.06,8,48),glow(D.color,1.4),0,.26,0,Math.PI/2,0,0,false);
-   const ring=part(g,G('lring',()=>new THREE.RingGeometry(2.2,2.55,48)),new THREE.MeshBasicMaterial({color:new THREE.Color(D.color),transparent:true,opacity:.6,depthWrite:false}),0,.24,0,-Math.PI/2,0,0,false);
-   const holo=part(g,new THREE.OctahedronGeometry(.6,0),new THREE.MeshStandardMaterial({color:D.color,emissive:D.color,emissiveIntensity:1.4,transparent:true,opacity:.85,flatShading:true}),0,3.2,0,0,0,0,false);
-   part(g,cyl(.06,.06,3,8),glow(D.color,.9),0,1.6,-2.6,0,0,0,false);
-   const bm=part(g,cyl(.5,.7,4.6,16,1,true),new THREE.MeshBasicMaterial({color:new THREE.Color(D.color),transparent:true,opacity:.1,blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.DoubleSide}),0,2.5,0,0,0,0,false);
-   const sgn=holoBoard(D.name.toUpperCase(),'SELECT TO DEPLOY',D.color,4.4,1.3);sgn.position.set(0,4.9,-3.2);g.add(sgn);
+   part(g,new THREE.TorusGeometry(2.72,.06,8,48),glow('#f0a830',1.4),0,.26,0,Math.PI/2,0,0,false);
+   const ring=part(g,G('lring',()=>new THREE.RingGeometry(2.2,2.55,48)),new THREE.MeshBasicMaterial({color:new THREE.Color(PADC),transparent:true,opacity:.6,depthWrite:false}),0,.24,0,-Math.PI/2,0,0,false);
+   const holo=part(g,new THREE.OctahedronGeometry(.6,0),new THREE.MeshStandardMaterial({color:PADC,emissive:PADC,emissiveIntensity:1.4,transparent:true,opacity:.85,flatShading:true}),0,3.2,0,0,0,0,false);
+   part(g,cyl(.06,.06,3,8),glow('#f0a830',.9),0,1.6,-2.6,0,0,0,false);
+   const bm=part(g,cyl(.5,.7,4.6,16,1,true),new THREE.MeshBasicMaterial({color:new THREE.Color(PADC),transparent:true,opacity:.1,blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.DoubleSide}),0,2.5,0,0,0,0,false);
+   const sgn=holoBoard('PAD '+['A','B','C'][i],'EMPTY - STEP ON TO OPEN',PADC,4.4,1.3);sgn.position.set(0,4.9,-3.2);g.add(sgn);
    part(g,box(.12,1.6,.12),col('#26333a',{metalness:.85,roughness:.3}),-1.8,.8,-3.25);part(g,box(.12,1.6,.12),col('#26333a',{metalness:.85,roughness:.3}),1.8,.8,-3.25);
    const cnt=canvasTex(256,64,()=>{});const cm=new THREE.SpriteMaterial({map:cnt,depthWrite:false,transparent:true});const cs=new THREE.Sprite(cm);cs.position.set(0,2.2,0);cs.scale.set(2.4,.6,1);g.add(cs);
-   const P={id,x,z:z0,r:2.5,ring,holo,label:cs,lt:''};LAUNCH.push(P);
+   const P={id,x,z:z0,r:2.5,ring,holo,beam:bm,sgn,label:cs,lt:'',col:''};LAUNCH.push(P);
    MAPANIM.push(dt=>{const t=performance.now()/1000;holo.rotation.y+=dt;holo.position.y=3.2+Math.sin(t*1.6+i)*.15;bm.rotation.y=t*.4;bm.material.opacity=.08+.05*Math.sin(t*2+i)})})}
  // decoration
  hoverWreck(sc,18,14,-.4,'#3f5560');hoverWreck(sc,-20,16,.3,'#5a4a44');hoverWreck(sc,22,-24,1.9,'#2f4550');
@@ -1152,22 +1163,28 @@ $('#shopClose').onclick=closeShop;$('#coClose').onclick=()=>$('#crateOpen').hidd
 S.pad=null;
 function enterCamp(){S.view='camp';$('#lobby').hidden=true;$('#hud').hidden=true;$('#endScreen').hidden=true;$('#menu').hidden=true;$('#campHud').hidden=false;$('#chatToggle').hidden=chatOpen;S.panel=null;padPopPad=null;padPopSeen=null;$('#padPop').hidden=true;$('#campPanel').hidden=true;closeSide&&closeSide();
  loadMap('camp');clearVisuals();resetPlayer();rebuildMyAvatar();pushPresence(true);updateLockHint();campHudLast=0;
- if(!store.get('campHint',false)){store.set('campHint',true);setTimeout(()=>toast('Step onto a deploy zone to set up your party. Friends join that same zone, then you all deploy together. At the Supply Shop, press E at a crate to open it.',7000),800)}}
+ if(!store.get('campHint',false)){store.set('campHint',true);setTimeout(()=>toast('Walk onto a deploy zone, pick a map and open a party. Friends have '+(BOARD/1000)+' seconds to stand on that same zone, then everyone on it deploys together. At the Supply Shop, press E at a crate to open it.',8000),800)}}
 function exitCamp(){$('#campHud').hidden=true;$('#chatToggle').hidden=true;$('#chatBox').hidden=true;chatOpen=false;padPopPad=null;padPopSeen=null;$('#padPop').hidden=true;$('#campPanel').hidden=true;S.panel=null;S.view='lobby';if(document.pointerLockElement)document.exitPointerLock();for(const [,A] of RAV)scene.remove(A.ch.g);RAV.clear();if(PL.avatar){scene.remove(PL.avatar.g);PL.avatar=null}$('#lobby').hidden=false;renderLobby()}
 function rebuildMyAvatar(){if(PL.avatar){scene.remove(PL.avatar.g);PL.avatar=null}}
 function padOf(x,z){for(const P of LAUNCH)if(Math.hypot(x-P.x,z-P.z)<P.r)return P.id;return null}
 let campHudLast=0,padPopPad=null,padPopSeen=null,padPopT=0;
 function campTick(dt){S.pad=padOf(PL.x,PL.z);const r=S.rm;
- const mem=r?roomMembers():[];const pads=r?mem.map(m=>m.me?S.pad:(m.presence.pd||null)):[];
+ const mem=r?roomMembers():[];
  const parts=hostedRooms();
- // the host launches once the party is full or armed and every member stands on the party pad
- if(r&&r.isHost&&r.st!=='play'){const all=mem.length>0&&pads.every(p=>p===r.map);const go=all&&(r.armed||mem.length>=(r.max||MAXP));
-  if(go){if(!r.lc||r.lc.map!==r.map){r.lc={map:r.map,at:now()+4000};pushPresence(true)}else if(now()>=r.lc.at){r.lc=null;r.armed=false;startGame(r.map)}}
-  else if(r.lc){r.lc=null;pushPresence(true)}}
- const lc=r?(r.isHost?r.lc:((peerById(r.hostPeer)||{presence:{}}).presence.hr||{}).lc):null;
- for(const P of LAUNCH){const here=parts.filter(x=>x.hr.map===P.id);const mine=r&&r.map===P.id?pads.filter(p=>p===P.id).length:0;
-  P.ring.material.opacity=(mine||here.length)?.95:.45;P.ring.scale.setScalar((mine||here.length)?1+Math.sin(performance.now()/200)*.03:1);
-  setPadLabel(P,lc&&lc.map===P.id?'LAUNCH IN '+Math.max(0,Math.ceil((lc.at-now())/1000)):(here.length?here.map(x=>shortName(x.name)+' '+x.count+'/'+(x.hr.max||MAXP)).join('   '):(S.pad===P.id?'PRESS E HERE':'')),lc&&lc.map===P.id?'#f0b030':(here.length?'#8ab04a':'#ece4d4'))}
+ // no lists and no codes to pick from: you board whichever party is open on the zone you are standing on
+ if(!r&&S.pad){const b=parts.find(x=>!x.me&&x.hr.pad===S.pad&&x.hr.st==='boarding'&&x.count<(x.hr.max||MAXP));if(b)joinParty(b)}
+ // when boarding closes the party leaves as one and the zone is free for the next group straight away
+ if(r&&r.isHost&&r.st==='boarding'){const shut=now()>=(r.boardEnd||0)||r.armed;
+  if(shut&&S.pad===r.pad){const crew=mem.filter(m=>(m.me?S.pad:(m.presence.pd||null))===r.pad).map(m=>m.peer);if(crew.length)deployParty(crew)}
+  else if(shut&&!r.held){r.held=true;toast('Boarding is over - stand on '+padName(r.pad)+' to take the party out')}
+  else if(!shut&&r.held)r.held=false}
+ for(const P of LAUNCH){const occ=parts.filter(x=>x.hr.pad===P.id&&x.hr.st==='boarding');
+  const mine=!!(r&&r.isHost&&r.pad===P.id&&r.st==='boarding');const grp=mine?{me:true,name:Prof.name||'You',hr:r,count:mem.length}:occ[0];
+  const tint=grp?((MAPS[grp.hr.map]||{}).color||PADC):PADC;
+  if(P.col!==tint){P.col=tint;P.ring.material.color.set(tint);P.holo.material.color.set(tint);P.beam.material.color.set(tint)}
+  P.ring.material.opacity=grp?.95:.45;P.ring.scale.setScalar(grp?1+Math.sin(performance.now()/200)*.03:1);
+  setPadLabel(P,grp?String((MAPS[grp.hr.map]||{}).name||'?').toUpperCase()+'  '+leftSec(grp.hr.boardEnd||grp.hr.bd)+'s'+(grp.me?'  '+onPadCount(grp)+'/'+mem.length:''):(S.pad===P.id?'PRESS E HERE':''),tint);
+  P.sgn.setText(padName(P.id),grp?(grp.me?'BOARD THEN GO':shortName(grp.name).toUpperCase()+' IS BOARDING'):'EMPTY - STEP ON TO OPEN',tint)}
  if(!S.pad){if(padPopPad)closePadPop();padPopSeen=null}
  else if(padPopPad!==S.pad){if(padPopPad)closePadPop();if(S.pad!==padPopSeen)openPadPop()}
  else if(padPopPad){padPopT-=dt;if(padPopT<=0){padPopT=.2;renderPadPop()}}
@@ -1175,64 +1192,74 @@ function campTick(dt){S.pad=padOf(PL.x,PL.z);const r=S.rm;
  if(OPEN&&OPEN.popped&&Math.hypot(PL.x-OPEN.spot.x,PL.z-OPEN.spot.z)<4&&!S.panel){pr.hidden=false;pr.classList.remove('bad');pr.replaceChildren(h('b',{text:RAR[OPEN.g.r].n+' · '+OPEN.g.n+(OPEN.res==='new'?' unlocked!':OPEN.res==='star'?' '+'★'.repeat(starsOf(OPEN.g.type)):' (maxed, coins refunded)')}),h('span',null,h('kbd',{text:'E'}),' continue'))}
  else if(cs&&!S.panel){const C=cs.C,afford=(Prof.coins||0)>=C.cost;pr.hidden=false;pr.classList.toggle('bad',!afford);pr.replaceChildren(h('b',{text:C.n+' · '+C.cost+' coins · sentries'}),h('span',null,afford?h('kbd',{text:'E'}):null,afford?' buy and open   ':'Need '+(C.cost-(Prof.coins||0))+' more coins   ',h('span',{class:'odds',style:'display:inline-flex'},C.odds.map((o,i)=>o?h('span',{style:'color:'+RAR[i].c,text:RAR[i].n+' '+o+'%'}):null))))}
  else if(nearLocker&&!S.panel){pr.hidden=false;pr.classList.remove('bad');pr.replaceChildren(h('b',{text:'Armory'}),h('span',null,h('kbd',{text:'E'}),' view your sentries and gear'))}
- else if(S.pad&&!S.panel){const D=MAPS[S.pad];pr.hidden=false;pr.classList.remove('bad');
-  if(r&&r.map===S.pad){const waiting=mem.length-pads.filter(p=>p===S.pad).length;
-   pr.replaceChildren(h('b',{text:D.name+' · your party '+mem.length+'/'+(r.max||MAXP)}),h('span',{text:waiting?('Waiting for '+waiting+' more to stand on this pad'):(r.st==='play'?'A match is running here':(lc&&lc.map===S.pad?'Launching…':'Everyone is on the pad'))}))}
-  else{const open=parts.filter(x=>x.hr.map===S.pad);
-   pr.replaceChildren(h('b',{text:D.name}),h('span',null,h('kbd',{text:'E'}),' ',open.length?open.map(x=>shortName(x.name)+(x.count>=(x.hr.max||MAXP)?' (full)':"'s party "+x.count+'/'+(x.hr.max||MAXP))).join(' · '):'open your party on this pad'))}}
+ else if(S.pad&&!S.panel){pr.hidden=false;pr.classList.remove('bad');
+  const mineHere=!!(r&&r.pad===S.pad&&r.st==='boarding');const open=parts.filter(x=>x.hr.pad===S.pad&&x.hr.st==='boarding');
+  if(mineHere){const here=onPadCount({me:true,hr:r,count:mem.length});
+   pr.replaceChildren(h('b',{text:padName(S.pad)+' to '+((MAPS[r.map]||{}).name||'?')+' · '+mem.length+'/'+(r.max||MAXP)+' · '+leftSec(r.boardEnd)+'s to depart'}),
+    h('span',{text:here<mem.length?('waiting on '+(mem.length-here)+' more of your party to stand here'):(mem.length>=(r.max||MAXP)?'party full - it leaves when the timer hits zero':'deploy now or let the timer run out')}))}
+  else if(open.length){const x=open[0];
+   pr.replaceChildren(h('b',{text:shortName(x.name)+'’s boarding party to '+((MAPS[x.hr.map]||{}).name||'?')}),h('span',{text:'you board with them · '+leftSec(x.hr.bd)+'s left · '+x.count+'/'+(x.hr.max||MAXP)+' in'}))}
+  else pr.replaceChildren(h('b',{text:padName(S.pad)+' · open deploy zone'}),h('span',null,h('kbd',{text:'E'}),' pick a map and open a '+(BOARD/1000)+' second boarding window'))}
  else pr.hidden=true;
  const t=performance.now();if(t-campHudLast<200)return;campHudLast=t;
  const campers=others().filter(p=>p.presence&&p.presence.n&&p.presence.vw==='camp');
- $('#campStatus').textContent=(lc?('Launching '+MAPS[lc.map].name+' in '+Math.max(0,Math.ceil((lc.at-now())/1000))+'s')
-  :(r?('Party on '+(MAPS[r.map]?MAPS[r.map].name:'?')+' · '+mem.length+'/'+(r.max||MAXP)+' · '+(r.st==='play'?'match running':(mem.length&&pads.every(p=>p===r.map)?((r.armed||mem.length>=(r.max||MAXP))?'launching':'holding for players'):'everyone stand on the pad')+' · L leaves')+' · code '+r.code)
-   :'Walk onto a deploy zone to set up a party'))+' · '+(S.connected?campers.length+1+' in camp':'offline - nobody can see you');
- $('#campJoin').hidden=!(r&&r.st==='play'&&!r.isHost&&S.pad===r.map);
+ $('#campStatus').textContent=((r&&r.st==='play')?('Your party is live in '+((MAPS[r.map]||{}).name||'the zone')+(r.crew&&r.crew.indexOf(S.myPeer)>=0?' - rejoin from here':' - you missed the boarding window'))
+  :r?('Your party · '+padName(r.pad)+' to '+((MAPS[r.map]||{}).name||'?')+' · '+onPadCount({me:true,hr:r,count:mem.length})+'/'+mem.length+' on the zone · '+leftSec(r.boardEnd)+'s · L leaves · code '+r.code)
+   :'Walk onto a deploy zone to open a party - friends join by standing on it with you')+' · '+(S.connected?campers.length+1+' in camp':'offline - nobody can see you');
+ $('#campJoin').hidden=!(r&&!r.isHost&&r.st==='play'&&r.crew&&r.crew.indexOf(S.myPeer)>=0);
  $('#campScrap').textContent=Prof.coins||0;
  if(padPopPad)renderPadPop();
  if(!$('#campPanel').hidden)renderCampPanel()}
-function padParties(pad){return hostedRooms().filter(x=>x.hr.map===pad)}
+function padParties(pad){return hostedRooms().filter(x=>x.hr.pad===pad&&x.hr.st==='boarding')}
+// how many of a party are physically on its zone right now - the host's own presence carries its pad too
+function onPadCount(x){if(!x||!x.hr||!x.hr.pad)return 0;let n=0;if(x.me){if(S.pad===x.hr.pad)n++}else if(((peerById(x.peer)||{}).presence||{}).pd===x.hr.pad)n++;
+ for(const q of others())if(q.peer!==x.peer&&q.presence&&q.presence.rm===x.hr.id&&q.presence.pd===x.hr.pad)n++;return n}
+// who is in a party and whether each of them is standing on its zone at the moment
+function partyRows(x){const raw=x.me?roomMembers():[peerById(x.peer)].concat(others().filter(q=>q.peer!==x.peer&&q.presence&&q.presence.rm===x.hr.id))
+  .filter(Boolean).map(p=>({peer:p.peer,presence:p.presence||{}}));
+ return raw.map(m=>({name:String((m.presence||{}).n||'Survivor'),color:(m.presence||{}).c,me:!!m.me,
+  on:((m.me?S.pad:((m.presence||{}).pd||null))||null)===x.hr.pad,host:x.me?!!m.me:m.peer===x.peer}))}
 function openPadPop(){if(S.view!=='camp')return;$('#padPop').hidden=false;padPopPad=S.pad;S.panel='pad';if(document.pointerLockElement)document.exitPointerLock();renderPadPop();updateLockHint()}
 function closePadPop(){if(padPopPad)padPopSeen=padPopPad;$('#padPop').hidden=true;padPopPad=null;if(S.panel==='pad')S.panel=null;updateLockHint();if(S.view==='camp')lockPointer()}
-function renderPadPop(){const pad=padPopPad;if(!pad)return;const D=MAPS[pad],r=S.rm,here=padParties(pad);
- const mem=r?roomMembers():[],onPad=r?mem.filter(m=>(m.me?S.pad:(m.presence.pd||null))===pad).length:0;
- const lc=r?(r.isHost?r.lc:((peerById(r.hostPeer)||{presence:{}}).presence.hr||{}).lc):null;
- $('#padTitle').textContent=D.name;
- $('#padWho').textContent=r&&r.map===pad?(onPad+'/'+mem.length+' on the pad · '+(mem.length||1)+'/'+(r.max||MAXP)+' players')
-  :(here.length?(here.length+' '+(here.length===1?'party':'parties')+' here'):'no parties here');
- const full=!!(r&&mem.length>=(r.max||MAXP));
+function renderPadPop(){const pad=padPopPad;if(!pad)return;const r=S.rm,here=padParties(pad);
+ const mem=r?roomMembers():[],mineHere=!!(r&&r.pad===pad&&r.st==='boarding');
+ const onPad=mineHere?onPadCount({me:true,hr:r,count:mem.length}):0;
+ $('#padTitle').textContent=padName(pad)+' · deploy zone';
+ $('#padWho').textContent=mineHere?(onPad+'/'+mem.length+' on the zone · '+mem.length+'/'+(r.max||MAXP)+' boarding')
+  :(here.length?(shortName(here[0].name)+' boarding · '+leftSec(here[0].hr.bd)+'s left'):'zone empty');
  let noteTxt;
- if(r&&r.map===pad){
-  if(lc&&lc.map===pad)noteTxt='Launching in '+Math.max(0,Math.ceil((lc.at-now())/1000))+'s · stay on the pad';
-  else if(r.st==='play')noteTxt='A match is already running in this party';
-  else if(onPad<mem.length)noteTxt='All '+mem.length+' party members stand on this pad to launch · press L to leave';
-  else if(full||r.armed)noteTxt='Starting the four second count';
-  else noteTxt='Open party · '+mem.length+'/'+(r.max||MAXP)+' · friends join here, or the host launches with who is here';
- }else if(r)noteTxt='You are in a party on '+((MAPS[r.map]||{}).name||'?')+' · press L to leave it, then open one here';
- else noteTxt='Pick the player limit and difficulty, open your party here, and friends who walk onto this pad can join it';
+ if(mineHere){
+  if(onPad<mem.length)noteTxt='All '+mem.length+' of your party must be standing here when the timer hits zero · press L to leave';
+  else noteTxt='Departs in '+leftSec(r.boardEnd)+'s with whoever is on this zone · friends board just by walking on';
+ }else if(r&&r.st==='boarding')noteTxt='Your party boards on '+padName(r.pad)+' for '+((MAPS[r.map]||{}).name||'?')+' · press L to leave it, then open one here';
+ else if(r&&r.st==='play')noteTxt='Your party already deployed'+(r.crew&&r.crew.indexOf(S.myPeer)>=0?' - use Rejoin below':' - you missed its boarding window');
+ else if(here.length)noteTxt='Stand here and you board with '+shortName(here[0].name)+' automatically · '+leftSec(here[0].hr.bd)+'s left to get on';
+ else noteTxt='Pick a destination, then open the party. Everyone on this zone when the '+(BOARD/1000)+' second window closes deploys together.';
  $('#padNote').textContent=noteTxt;
- const capEl=$('#padMax'),ds=$('#padDiff'),mineHere=!!(r&&r.map===pad),canSet=mineHere?(r.isHost||S.admin):!r;
+ const mpEl=$('#padMap'),capEl=$('#padMax'),ds=$('#padDiff'),canSet=mineHere?(r.isHost||S.admin):!r;
  const lockSel=(el,text)=>{if(el.dataset.lock!==text){el.dataset.lock=text;el.replaceChildren(h('option',{text}));el.disabled=true}};
- if(r&&r.map!==pad){lockSel(capEl,'leave your party first');lockSel(ds,'leave your party first')}
- else if(!canSet){lockSel(capEl,(r.max||MAXP)+' players (host picks)');lockSel(ds,(DIFF[r.df]||DIFF.normal).name+' (host picks)')}
- else{delete capEl.dataset.lock;delete ds.dataset.lock;const cur=+((r?r.max:prefs.cap)||MAXP);const opts=[...Array(MAXP)].map((_,i)=>i+1).filter(n=>!r||n>=mem.length);
+ if(r&&!mineHere){lockSel(mpEl,'leave your party first');lockSel(capEl,'leave your party first');lockSel(ds,'leave your party first')}
+ else if(!canSet){lockSel(mpEl,((MAPS[r.map]||{}).name||'?')+' (host picks)');lockSel(capEl,(r.max||MAXP)+' players (host picks)');lockSel(ds,(DIFF[r.df]||DIFF.normal).name+' (host picks)')}
+ else{delete mpEl.dataset.lock;delete capEl.dataset.lock;delete ds.dataset.lock;
+  if(mpEl.dataset.mk!==MAP_IDS.join(',')){mpEl.dataset.mk=MAP_IDS.join(',');mpEl.replaceChildren(...MAP_IDS.map(id=>h('option',{value:id},MAPS[id].name)))}
+  mpEl.value=(mineHere?r.map:(here.length?here[0].hr.map:prefs.map))||'outpost';mpEl.disabled=false;
+  const cur=+((mineHere?r.max:prefs.cap)||MAXP);const opts=[...Array(MAXP)].map((_,i)=>i+1).filter(n=>!mineHere||n>=mem.length);
   if(capEl.dataset.sig!==opts.join(',')){capEl.dataset.sig=opts.join(',');capEl.replaceChildren(...opts.map(n=>h('option',{value:String(n),text:n===1?'1 · solo':n+' players'})))}
-  capEl.value=String(clamp(cur,Math.max(1,r?mem.length:1),MAXP));capEl.disabled=false;
+  capEl.value=String(clamp(cur,Math.max(1,mineHere?mem.length:1),MAXP));capEl.disabled=false;
   const hardOk=!!(Prof.cleared&&(Prof.cleared.normal||Prof.cleared.hard));
   if(ds.dataset.hk!==String(hardOk)){ds.dataset.hk=String(hardOk);ds.replaceChildren(...Object.entries(DIFF).map(([k,D])=>h('option',{value:k,disabled:k==='hard'&&!hardOk},D.name+' · '+D.waves+' waves'+(k==='hard'&&!hardOk?' (win Normal to unlock)':''))))}
-  ds.value=(r?r.df:prefs.df)||'normal';ds.disabled=false}
- const rl=$('#padRooms'),rsig=here.map(x=>[x.peer,x.hr.id,x.count,x.hr.max||MAXP,x.hr.st||'',x.hr.df||'',x.hr.map,shortName(x.name),r&&r.id===x.hr.id?'me':'',S.admin?'a':''].join('~')).join(';');
- if(rl.dataset.sig!==rsig){rl.dataset.sig=rsig;rl.replaceChildren(...(here.length?here.map(x=>{const full=x.count>=(x.hr.max||MAXP),mine=!!(r&&r.id===x.hr.id);
-  return h('div',null,h('span',{class:'dot',style:'background:'+safeColor(String((peerById(x.peer)||{presence:{}}).presence.c||''))}),h('span',{text:shortName(x.name)+(mine?' (you)':'')}),
-   h('span',{class:'muted',text:(DIFF[x.hr.df]||DIFF.normal).name}),
-   h('span',{class:'muted',style:'margin-left:auto',text:x.count+'/'+(x.hr.max||MAXP)+(x.hr.st==='play'?' · live':'')}),
-   mine?null:h('button',{class:'btn',style:'padding:2px 7px;font-size:11px',disabled:full&&!S.admin,onclick:()=>{joinParty(x);renderPadPop()},text:full?'full':'join'}))})
-  :[h('div',{class:'muted',text:'Nobody on this pad yet'})]))}
+  ds.value=(mineHere?r.df:prefs.df)||'normal';ds.disabled=false}
+ const rl=$('#padRooms'),gx=mineHere?{me:true,hr:r,name:Prof.name||'You',count:mem.length}:here[0];
+ const rows=gx?partyRows(gx):[],rsig=gx?[gx.hr.id,gx.hr.map,gx.hr.st,rows.map(c=>c.name+(c.on?'1':'0')+c.host).join('~'),leftSec(gx.hr.boardEnd||gx.hr.bd)].join(';'):'';
+ if(rl.dataset.sig!==rsig){rl.dataset.sig=rsig;rl.replaceChildren(...(gx?rows.map(c=>h('div',null,h('span',{class:'dot',style:'background:'+safeColor(String(c.color||''))}),
+  h('span',{text:c.name+(c.me?' (you)':'')+(c.host?' · host':'')}),
+  h('span',{class:'muted',style:'margin-left:auto;color:'+(c.on?'#8ab04a':'#c07a5a'),text:c.on?'on the zone':'not on the zone'}))):[h('div',{class:'muted',text:'Nobody on this zone yet'})]))}
  const o=$('#padOpen'),l=$('#padLeave'),j=$('#padJoin'),a=$('#padArm');
- o.hidden=!!(r&&r.map===pad);o.disabled=!pad;
- a.hidden=!(r&&r.map===pad&&r.isHost&&r.st!=='play'&&!(full&&onPad===mem.length));
- a.textContent=r&&r.armed?'Cancel launch':'Launch with '+(mem.length||1)+(mem.length===1?' player':' players');
- j.hidden=!(r&&r.st==='play'&&!r.isHost&&r.map===pad);
- l.hidden=!r;l.innerHTML='';l.append(document.createTextNode(r&&r.map===pad?'Leave this party':'Leave your party'),h('kbd',{text:'L'}))}
+ o.hidden=!!r;o.disabled=!pad;
+ a.hidden=!(mineHere&&r.isHost);
+ a.textContent='Deploy now with '+onPad;
+ j.hidden=!(r&&!r.isHost&&r.st==='play'&&r.crew&&r.crew.indexOf(S.myPeer)>=0);
+ l.hidden=!r;l.innerHTML='';l.append(document.createTextNode(mineHere?'Leave this party':'Leave your party'),h('kbd',{text:'L'}))}
 function openCampPanel(){if(S.view!=='camp')return;$('#campPanel').hidden=false;S.panel='camp';if(document.pointerLockElement)document.exitPointerLock();renderCampPanel();updateLockHint()}
 function closeCampPanel(){$('#campPanel').hidden=true;if(S.panel==='camp')S.panel=null;updateLockHint();if(S.view==='camp'&&!padPopPad)lockPointer()}
 function miniSel(opts,val,onch){const s=h('select',{class:'field',style:'width:auto;padding:3px 7px;font-size:11px'});
@@ -1272,12 +1299,12 @@ function renderCampPanel(){const r=S.rm,parts=hostedRooms(),mem=r?roomMembers():
    .concat(campers.map(p=>({peer:p.peer,me:false,name:String(p.presence.n),color:p.presence.c,admin:!!p.admin,host:false,pad:p.presence.pd||null})));
  const pl=$('#campPlayers'),psig=rows.map(c=>[c.peer,c.name,c.pad||'',c.admin?'a':'',c.host?'h':'',c.me?'m':''].join('~')).join(';');
  if(pl.dataset.psig!==psig){pl.dataset.psig=psig;pl.replaceChildren(...rows.map(campRow))}
- const cl=$('#campRooms'),csig=parts.map(x=>[x.peer,x.hr.id,x.count,x.hr.max||MAXP,x.hr.st||'',x.hr.df||'',x.hr.map,shortName(x.name),r&&r.id===x.hr.id?'me':'',S.admin?'a':''].join('~')).join(';')+'|'+(r?r.id:'')+S.admin;
- if(cl.dataset.csig!==csig){cl.dataset.csig=csig;cl.replaceChildren(...(parts.length?parts.map(x=>{const full=x.count>=(x.hr.max||MAXP),mine=!!(r&&r.id===x.hr.id);
+ const cl=$('#campRooms'),csig=parts.map(x=>[x.peer,x.hr.id,x.count,x.hr.max||MAXP,x.hr.st||'',x.hr.df||'',x.hr.map,x.hr.pad,shortName(x.name),leftSec(x.hr.bd),onPadCount(x),r&&r.id===x.hr.id?'me':'',S.admin?'a':''].join('~')).join(';')+'|'+(r?r.id:'')+S.admin;
+ if(cl.dataset.csig!==csig){cl.dataset.csig=csig;cl.replaceChildren(...(parts.length?parts.map(x=>{const mine=!!(r&&r.id===x.hr.id),live=x.hr.st==='play';
   const row=h('div',null,h('span',{class:'dot',style:'background:'+safeColor(String((peerById(x.peer)||{presence:{}}).presence.c||''))}),h('span',{text:shortName(x.name)+(mine?' (you)':'')}),
-   h('span',{class:'muted',text:(MAPS[x.hr.map]?MAPS[x.hr.map].name:'?')+' · '+(DIFF[x.hr.df]||DIFF.normal).name}),
-   h('span',{class:'muted',style:'margin-left:auto',text:x.count+'/'+(x.hr.max||MAXP)+(x.hr.st==='play'?' · live':'')}),
-   mine?null:h('button',{class:'btn',style:'padding:2px 7px;font-size:11px',disabled:full&&!S.admin,onclick:()=>{joinParty(x);renderCampPanel()},text:full?'full':'join'}));
+   h('span',{class:'muted',text:(x.hr.pad?padName(x.hr.pad)+' to ':live?'deployed to ':'')+((MAPS[x.hr.map]||{}).name||'?')+' · '+(DIFF[x.hr.df]||DIFF.normal).name}),
+   h('span',{class:'muted',style:'margin-left:auto',text:live?('live · '+x.count+(x.count===1?' player':' players')+' in'):(onPadCount(x)+' on the zone · '+leftSec(x.hr.bd)+'s left')}),
+   mine?null:h('span',{class:'muted',style:'font-size:11px',text:'walk on to board'}));
   const tools=S.admin&&!mine?adminPartyTools(x):null;
   return tools?h('div',{style:'display:flex;flex-direction:column;align-items:stretch;gap:0'},row,tools):row})
   :[h('div',{class:'muted',text:'None yet — step onto a deploy zone'})]))}
@@ -1289,14 +1316,15 @@ function renderCampPanel(){const r=S.rm,parts=hostedRooms(),mem=r?roomMembers():
 function shortName(n){n=String(n||'Survivor');return n.length>10?n.slice(0,9)+'…':n}
 function campRow(c){return h('div',null,h('span',{class:'dot',style:'background:'+safeColor(c.color)}),shortName(c.name),
  c.admin?h('span',{class:'tag host',text:'admin'}):null,c.host?h('span',{class:'muted',text:'host'}):null,c.me?h('span',{class:'muted',text:'you'}):null,
- h('span',{class:'muted',style:'margin-left:auto',text:c.pad?MAPS[c.pad].name:'camp'}),
+ h('span',{class:'muted',style:'margin-left:auto',text:c.pad?padName(c.pad):'camp'}),
  (S.admin&&!c.me)?h('button',{class:'btn danger',style:'padding:2px 7px;font-size:11px',onclick:()=>{if(S.room)S.room.kick(c.peer)},text:'kick'}):null)}
 $('#padMax').onchange=e=>{const v=clamp(+e.target.value,1,MAXP);if(!S.rm){prefs.cap=v;savePrefs()}else if(S.rm.isHost){S.rm.max=v;pushPresence(true)}else if(S.admin)request('settings',{max:v})};
 $('#padDiff').onchange=e=>{const v=e.target.value;if(!S.rm){prefs.df=v;savePrefs()}else if(S.rm.isHost){S.rm.df=v;pushPresence(true)}else if(S.admin)request('settings',{df:v})};
-$('#padOpen').onclick=()=>{openParty(padPopPad||S.pad);renderPadPop()};
+$('#padMap').onchange=e=>{const v=MAPS[e.target.value]?e.target.value:'outpost';prefs.map=v;savePrefs();if(S.rm&&S.rm.isHost&&S.rm.st==='boarding'){S.rm.map=v;pushPresence(true)}};
+$('#padOpen').onclick=()=>{openParty(padPopPad||S.pad,$('#padMap').value,$('#padDiff').value,+$('#padMax').value);renderPadPop()};
 $('#padLeave').onclick=()=>{leaveParty();renderPadPop()};
 $('#padJoin').onclick=()=>{S.leftGid=-1;enterGame()};
-$('#padArm').onclick=()=>{if(!S.rm||!S.rm.isHost)return;S.rm.armed=!S.rm.armed;S.rm.lc=null;pushPresence(true);campHudLast=0;renderPadPop()};
+$('#padArm').onclick=()=>{if(!S.rm||!S.rm.isHost||S.rm.st!=='boarding')return;S.rm.armed=true;pushPresence(true);campHudLast=0;renderPadPop()};
 $('#padClose').onclick=closePadPop;
 $('#campPanelBtn').onclick=openCampPanel;
 $('#campPanelClose').onclick=closeCampPanel;
@@ -1311,10 +1339,7 @@ $('#chatIn').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Ente
 
 function nearCrate(){let b=null,bd=2.2;for(const c of CRATE_SPOTS){const d=Math.hypot(PL.x-c.x,PL.z-c.z);if(d<bd){bd=d;b=c}}return b}
 function campInteract(){if(OPEN&&OPEN.popped&&Math.hypot(PL.x-OPEN.spot.x,PL.z-OPEN.spot.z)<4){closeOpen();return}
- if(S.pad){const open=hostedRooms().filter(x=>x.hr.map===S.pad&&x.peer!==S.myPeer);const j=open.find(x=>x.count<(x.hr.max||MAXP))||open[0];
-  if(!j){if(!S.rm)openParty(S.pad);else if(S.rm.map!==S.pad)toast('You are in a party on '+MAPS[S.rm.map].name+'. Leave it in the panel to open one here.');return}
-  if(j.count>=(j.hr.max||MAXP)&&!S.admin){toast('That party is full.');return}
-  joinParty(j);return}
+ if(S.pad){if(S.rm&&S.rm.pad!==S.pad&&S.rm.st==='boarding')toast('You are boarding '+padName(S.rm.pad)+' - press L to leave it first.');padPopSeen=null;openPadPop();return}
  const c=nearCrate();if(c){buyCrate3D(c);return}if(LOCKER&&Math.hypot(PL.x-LOCKER.x,PL.z-LOCKER.z)<1.9)openShop()}
 /* ============ difficulty & host-authoritative simulation ============ */
 const DIFF={easy:{name:'Easy',waves:8,hp:.75,gold:420,reward:1},normal:{name:'Normal',waves:10,hp:1,gold:350,reward:1.6},hard:{name:'Hard',waves:12,hp:1.35,gold:300,reward:2.5}};
@@ -1534,7 +1559,7 @@ function resetPlayer(){PL.x=PSPAWN.x+rnd(-1,1);PL.z=PSPAWN.z+rnd(-1,1);PL.y=0;PL
 let startTutorialNext=false;
 function enterGame(){loadMap((S.rm&&S.rm.map)||'outpost');$('#campHud').hidden=true;$('#prompt').hidden=true;$('#chatToggle').hidden=chatOpen;S.view='game';$('#lobby').hidden=true;$('#hud').hidden=false;$('#endScreen').hidden=true;$('#menu').hidden=true;S.panel=null;padPopPad=null;padPopSeen=null;$('#padPop').hidden=true;$('#campPanel').hidden=true;clearVisuals();resetPlayer();V_last=null;updateLockHint();pushPresence(true);
  if(startTutorialNext||!store.get('tutDone',false)){startTutorialNext=false;setTimeout(startTutorial,900)}}
-function exitGame(msg){S.spectate=null;$('#chatBox').hidden=true;chatOpen=false;const wasHost=S.rm&&S.rm.isHost;if(wasHost&&S.rm.st==='play'){S.rm.st='lobby';H=null}if(S.rm&&!wasHost){S.leftGid=S.rm.gid;S.rdy=false}
+function exitGame(msg){S.spectate=null;$('#chatBox').hidden=true;chatOpen=false;const wasHost=S.rm&&S.rm.isHost;if(wasHost&&S.rm.st==='play'){S.rm.st='closed';H=null}if(S.rm&&!wasHost){S.leftGid=S.rm.gid;S.rdy=false}
  S.view='lobby';closeSide();endTutorial(true);if(document.pointerLockElement)document.exitPointerLock();$('#hud').hidden=true;$('#endScreen').hidden=true;$('#menu').hidden=true;$('#lockhint').hidden=true;$('#chatToggle').hidden=true;S.panel=null;padPopPad=null;padPopSeen=null;$('#padPop').hidden=true;$('#campPanel').hidden=true;
  clearVisuals();for(const [,A] of RAV)scene.remove(A.ch.g);RAV.clear();if(PL.avatar){scene.remove(PL.avatar.g);PL.avatar=null}
  if(Prof.name)enterCamp();else{$('#lobby').hidden=false;loadMap('camp');renderLobby()}pushPresence(true);if(msg)toast(msg)}
