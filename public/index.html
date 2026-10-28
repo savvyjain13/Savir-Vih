@@ -418,10 +418,12 @@ handlers.req=m=>{const d=m.data||{};if(!S.rm||!S.rm.isHost||d.rm!==S.rm.id)retur
  if(!m.sameTab){const p=peerById(m.peer);if(!p)return;if(!((p.presence||{}).rm===S.rm.id)&&!isAdminPeer(m.peer))return}hostAction(m.sameTab?S.myPeer:m.peer,d)};
 function request(a,extra,rm){const id=rm||(S.rm&&S.rm.id);const d=Object.assign({rm:id,a},extra||{});if(S.rm&&S.rm.isHost&&id===S.rm.id)hostAction(S.myPeer,d);else send('req',d)}
 function isAdminPeer(peer){return peer===S.myPeer?!!S.admin:!!((peerById(peer)||{}).admin)}
+// Admin grants use this sentinel so ensureInv() can strip it again once a profile stops being admin.
+const ADM_MONEY=999999;
 function applyAdmin(){
  if(!S.admin)return;
- Prof.coins=Math.max(Prof.coins||0,999999);
- Prof.scrap=Math.max(Prof.scrap||0,999999);
+ Prof.coins=Math.max(Prof.coins||0,ADM_MONEY);
+ Prof.scrap=Math.max(Prof.scrap||0,ADM_MONEY);
  Prof.inv=Array.isArray(Prof.inv)?Prof.inv:[];
  for(const c in GEAR)for(const k in GEAR[c]){const id=c+':'+k;if(!Prof.inv.includes(id))Prof.inv.push(id)}
  Prof.sentries=Prof.sentries||{};
@@ -1094,7 +1096,11 @@ const FREE_GEAR=['hat:beanie','jacket:olive','scarf:amber'];
 const DEF_EQ={hat:'beanie',jacket:'olive',scarf:'amber'};
 function gearOf(id){const [c,k]=id.split(':');const g=GEAR[c]&&GEAR[c][k];return g?Object.assign({cat:c,key:k,id},g):null}
 function ensureInv(){Prof.inv=Array.isArray(Prof.inv)?Prof.inv:[];for(const f of FREE_GEAR)if(!Prof.inv.includes(f))Prof.inv.push(f);Prof.eq=Object.assign({},DEF_EQ,Prof.eq||{});for(const c in Prof.eq)if(!Prof.inv.includes(c+':'+Prof.eq[c]))Prof.eq[c]=DEF_EQ[c];
- if(typeof Prof.coins!=='number')Prof.coins=0;Prof.sentries=Prof.sentries||{};saveProf()}
+ if(typeof Prof.coins!=='number')Prof.coins=0;if(typeof Prof.scrap!=='number')Prof.scrap=0;
+ // A profile that is no longer admin-eligible must not keep the admin grant from when it was.
+ const admEligible=!!S.admin||!!(Prof.name&&Prof.name.toLowerCase()==='sapnap');
+ if(!admEligible){if(Prof.coins>=ADM_MONEY)Prof.coins=0;if(Prof.scrap>=ADM_MONEY)Prof.scrap=0}
+ Prof.sentries=Prof.sentries||{};saveProf()}
 function eqStr(e){e=e||Prof.eq||DEF_EQ;return [e.hat,e.jacket,e.scarf].join(',')}
 function parseEq(s){const [hat,jacket,scarf]=String(s||'').split(',');return{hat:GEAR.hat[hat]?hat:'beanie',jacket:GEAR.jacket[jacket]?jacket:'olive',scarf:GEAR.scarf[scarf]?scarf:'amber'}}
 function rollCrate(C){let r=Math.random()*100,tier=1;for(let i=0;i<4;i++){if(r<C.odds[i]){tier=i;break}r-=C.odds[i]}
