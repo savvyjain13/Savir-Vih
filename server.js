@@ -16,7 +16,7 @@ const MAX_PER_SEC = 120;     // messages per second per player
 const LP_HOLD = 22000;       // how long a poll request waits when there is nothing to say
 const LP_PACE = 170;         // shortest gap between two answers to the same poller
 const MAX_PEERS = 48;        // a hard ceiling, so a stuck client can never fill the camp with ghosts
-const LP_IDLE = 45000;       // a poller that has not asked in this long has closed its tab
+const LP_IDLE = 30000;       // a poller that has not asked in this long has closed its tab (a held poll is quiet for 22s)
 const ADMIN_USER = (process.env.ADMIN_USER || 'Sapnap').toLowerCase();
 const ADMIN_PASS = process.env.ADMIN_PASS || '2132';
 const CHAT_MAX = 160;
@@ -194,12 +194,15 @@ setInterval(() => {
   for (const p of peers.values()) send(p, msg);
 }, 50);
 
-// Drop dead connections, and pollers whose tab went away without ever saying goodbye.
+// Drop dead socket connections.
 setInterval(() => {
-  for (const p of peers.values()) {
-    if (p.ws) { if (!p.alive) { p.ws.terminate(); continue; } p.alive = false; try { p.ws.ping(); } catch (e) {} }
-    else if (Date.now() - p.lastReq > (p.presence && p.presence.n ? LP_IDLE : 15000)) { if (!p.ws) poke(p); peers.delete(p.id); }
-  }
+  for (const p of peers.values()) if (p.ws) { if (!p.alive) { p.ws.terminate(); continue; } p.alive = false; try { p.ws.ping(); } catch (e) {} }
 }, 20000);
+
+// Pollers whose tab went away without ever saying goodbye are swept often, so a copy of a player who refreshed
+// does not linger in the camp. A healthy idle poller is quiet for one LP_HOLD at a time, so the floor is safe.
+setInterval(() => {
+  for (const p of peers.values()) if (!p.ws && Date.now() - p.lastReq > (p.presence && p.presence.n ? LP_IDLE : 15000)) { poke(p); peers.delete(p.id); }
+}, 4000);
 
 server.listen(PORT, () => console.log('Savour Vih server listening on port ' + PORT));
