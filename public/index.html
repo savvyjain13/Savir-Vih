@@ -16,11 +16,17 @@
  /* Two transports. A WebSocket while the network lets the upgrade through, and HTTP long-polling for networks
     that refuse it - school, office and hotel filters routinely allow every ordinary page while killing /ws.
     Both carry identical server messages, so nothing above this knows which one is in use. */
- let mode='ws',tries=0,lpId=null,box=[],ctl=null;
+ // The poll identity is ours, not the server's: a first request that gets cut short before the reply lands must
+ // not make the camp mint a replacement player, which is how a walking friend turns into hundreds of ghosts.
+ // Keeping it for the tab also means a reload rejoins as the same survivor instead of leaving a copy of you behind.
+ let mode='ws',tries=0,lpId=newId(),box=[],ctl=null;
+ function newId(){try{const s=sessionStorage.getItem('svpid');if(s&&/^p[A-Za-z0-9_-]{5,24}$/.test(s))return s}catch(e){}
+  const v='p'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-5);try{sessionStorage.setItem('svpid',v)}catch(e){}return v}
+ function freshId(){try{sessionStorage.removeItem('svpid')}catch(e){}return newId()}
  // The hosted instance goes to sleep when nobody visits it, so the first connection of a session usually dies
  // while the origin is still booting. Probing /health both wakes it and tells "asleep" apart from
  // "awake but blocked", which are different messages to a player staring at a spinner.
- let server='unknown',wakeT=null;
+ let server='unknown',wakeT=null,full=false;
  function say(){connCbs.forEach(f=>{try{f(connected)}catch(e){console.error(e)}})}
  function probe(){fetch('/health',{cache:'no-store'}).then(r=>{const s=r.ok?'up':'down';if(s!==server){server=s;say()}}).catch(()=>{if(server!=='down'){server='down';say()}})}
  function wake(){if(wakeT)return;probe();wakeT=setInterval(()=>{if(connected){clearInterval(wakeT);wakeT=null;return}probe()},4000)}
@@ -31,8 +37,15 @@
  function fromServer(arr){return arr.map(p=>{if(p.peer===me)return{peer:p.peer,sameTab:true,isMe:true,kind:'user',admin:!!p.admin,presence:myPres,updatedAt:p.updatedAt};
   const raw=JSON.stringify(p.presence||{});const old=seen.get(p.peer);let obj;if(old&&old.raw===raw)obj=old.obj;else{obj=Object.freeze(p.presence||{});seen.set(p.peer,{raw,obj})}
   return{peer:p.peer,sameTab:false,kind:'user',admin:!!p.admin,presence:obj,updatedAt:p.updatedAt}})}
- function post(o){if(mode==='lp'){if(o.t==='presence')return;box.push(o);if(ctl)try{ctl.abort()}catch(e){}return}
+ function post(o){if(mode==='lp'){
+   // Every poll carries our presence, so a step taken while a request is in flight has to recall it. Without this
+   // a walking player only updates when the server's hold expires, and their friends see them teleport.
+   if(o.t==='presence'){recall();return}
+   box.push(o);hangUp();return}
   if(ws&&ws.readyState===1)try{ws.send(JSON.stringify(o))}catch(e){}}
+ let lastPollAt=0,presT=null,selfAbort=null;
+ function hangUp(){if(!ctl)return;selfAbort=ctl;try{ctl.abort()}catch(e){}}
+ function recall(){if(presT)return;const wait=Math.max(0,180-(Date.now()-lastPollAt));presT=setTimeout(()=>{presT=null;hangUp()},wait)}
  function ingest(m){
   if(m.t==='welcome'){me=m.peer;server='up';post({t:'presence',p:myPres});if(admCred)post({t:'auth',user:admCred.u,pass:admCred.p});setConn(true)}
   else if(m.t==='peers')deliver(fromServer(m.peers||[]));
@@ -54,17 +67,28 @@
   if(ws){try{ws.onclose=null;ws.onmessage=null;ws.onerror=null;ws.close()}catch(e){}ws=null}
   pump()}
  async function pump(){let fails=0;
-  while(mode==='lp'){const out=box;box=[];const c=new AbortController();ctl=c;let j=null;
+  while(mode==='lp'){const c=new AbortController();let j=null,ours=false;
+   // Never ask twice inside one breath: a reply that arrives instantly would otherwise spin the loop.
+   const gap=Date.now()-lastPollAt;if(gap<150)await new Promise(r=>setTimeout(r,150-gap));
+   if(mode!=='lp')return;
+   const out=box;box=[];ctl=c;
+   if(presT){clearTimeout(presT);presT=null}
+   lastPollAt=Date.now();lastSent=JSON.stringify(myPres);
    // One request per round trip: it carries our presence and anything we want to say, and the server holds it
    // open until there is something new, so an idle camp costs almost no traffic.
-   try{const r=await fetch('/lp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({peer:lpId,p:myPres,s:out}),signal:c.signal,cache:'no-store'});j=await r.json()}catch(e){j=null}
+   try{const r=await fetch('/lp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({peer:lpId,p:myPres,s:out}),signal:c.signal,cache:'no-store'});j=await r.json()}catch(e){ours=selfAbort===c}
    if(ctl===c)ctl=null;
-   if(!j||typeof j!=='object'){me=null;setConn(false);deliver([]);
-    if(++fails>=4){fails=0;tries=0;mode='ws';setTimeout(connect,400);return}await new Promise(r=>setTimeout(r,1800));continue}
-   fails=0;if(j.peer)lpId=j.peer;if(j.peer&&!me)me=j.peer;
-   if(kicked){kicked=false;lpId=null;me=null;setConn(false);deliver([]);kickCbs.forEach(f=>{try{f(4001)}catch(e){}})}
+   // Hanging up on our own poll to say something is not a broken connection. Counting it as one is what made
+   // friends blink out and the camp thrash between transports; ask again at once instead.
+   if(ours){if(selfAbort===c)selfAbort=null;if(out.length)box=out.concat(box);continue}
+   if(!j||typeof j!=='object'){me=null;full=false;setConn(false);deliver([]);
+    // Only a long LP blackout is worth trying the socket again; a hiccup should not drop a working camp.
+    if(++fails>=12){fails=0;tries=0;mode='ws';setTimeout(connect,400);return}await new Promise(r=>setTimeout(r,1800));continue}
+   fails=0;full=j.error==='full';if(j.peer)lpId=j.peer;if(j.peer&&!me)me=j.peer;
+   if(kicked){kicked=false;lpId=freshId();me=null;full=false;setConn(false);deliver([]);kickCbs.forEach(f=>{try{f(4001)}catch(e){}})}
    (j.m||[]).forEach(ingest);if(me&&!connected)setConn(true)}}
- function flush(){post({t:'presence',p:myPres})}
+ let lastSent='';
+ function flush(){flushT=null;const j=JSON.stringify(myPres);if(j===lastSent)return;lastSent=j;post({t:'presence',p:myPres})}
  const room={
   presence(patch){const n=Object.assign({},myPres);for(const k in patch){if(patch[k]===null)delete n[k];else n[k]=patch[k]}myPres=n;if(!flushT)flushT=setTimeout(flush,35);return Promise.resolve()},
   onPeers(f){peerCbs.push(f);setTimeout(()=>f({peers:list,joined:list,left:[],updated:[]}),0);return()=>{}},
@@ -85,11 +109,15 @@
   connected(){return connected},peers(){return list},
   // 'online' = playing with others. 'asleep' = the host is cold-booting and will answer shortly.
   // 'blocked' = the host answers HTTP but refuses both transports, which no amount of waiting fixes.
-  status(){return connected?'online':server==='up'?'blocked':server==='down'?'asleep':'checking'},
+  status(){return connected?'online':full?'full':server==='up'?'blocked':server==='down'?'asleep':'checking'},
   transport(){return mode==='lp'?'poll':'socket'},
-  retry(){if(mode==='lp'){if(ctl)try{ctl.abort()}catch(e){}return}
+  retry(){if(mode==='lp'){hangUp();return}
    if(ws){try{ws.onclose=null;ws.onerror=null;ws.close()}catch(e){}}tries=0;retry=0;server='unknown';wake();connect()}};
  window.claude={use:async n=>n==='room'?room:null};
+ // A polling tab has no socket to close, so leaving the page has to say goodbye itself - otherwise the camp keeps
+ // showing a copy of you standing where you were until the idle sweep runs.
+ if(window.addEventListener)window.addEventListener('pagehide',()=>{ if(mode!=='lp'||!lpId)return;
+  try{navigator.sendBeacon('/lp',new Blob([JSON.stringify({peer:lpId,s:[{t:'bye'}]})],{type:'application/json'}))}catch(e){} });
  try{if(sessionStorage.getItem('svlp')==='1')useLP();else connect()}catch(e){connect()}})();
 </script>
 
@@ -537,7 +565,7 @@ function renderLobby(){if(S.view!=='lobby')return;const card=$('#lobbyCard');con
  const r=S.rm;
  if(Prof.name&&!renderLobby.editName){const st=S.room?S.room.status():'none';
   // Never leave the player on a bare spinner: each state says what is actually happening and what to do.
-  const msg=st==='online'?'Ready to deploy.':st==='asleep'?'The camp server is asleep. Waking it takes about half a minute - keep this open.':st==='blocked'?'The camp server is awake but refuses the connection from this view, so the camp will hold you alone.':st==='checking'?'Checking the camp server…':'Connecting to the camp server…';
+  const msg=st==='online'?'Ready to deploy.':st==='asleep'?'The camp server is asleep. Waking it takes about half a minute - keep this open.':st==='full'?'The camp server is holding its limit of survivors. It frees itself within a minute - keep this open.':st==='blocked'?'The camp server is awake but refuses the connection from this view, so the camp will hold you alone.':st==='checking'?'Checking the camp server…':'Connecting to the camp server…';
   parts.push(h('div',{class:'row',style:'gap:10px'},st==='online'?h('span',{class:'dot',style:'background:#5ae08a'}):h('span',{class:'spin'}),h('b',{text:!S.capsReady?'Starting up…':msg})));
   if(st!=='none'&&st!=='online')parts.push(h('div',{class:'row'},h('button',{class:'btn',style:'padding:5px 12px',onclick:()=>{S.room.retry();lobbyDirty=true;renderLobby()},text:'Try the camp server again'})));
   if(S.admin)parts.push(h('div',{class:'row'},h('span',{class:'tag host',text:'ADMIN'}),h('span',{class:'muted',text:'Fly F · Spectate V · kick + chat tools'})));

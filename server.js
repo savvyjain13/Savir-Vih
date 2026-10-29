@@ -14,6 +14,8 @@ const MAX_PRESENCE = 8192;   // bytes of JSON per player
 const MAX_MSG = 8192;        // bytes per relayed event
 const MAX_PER_SEC = 120;     // messages per second per player
 const LP_HOLD = 22000;       // how long a poll request waits when there is nothing to say
+const LP_PACE = 170;         // shortest gap between two answers to the same poller
+const MAX_PEERS = 48;        // a hard ceiling, so a stuck client can never fill the camp with ghosts
 const LP_IDLE = 45000;       // a poller that has not asked in this long has closed its tab
 const ADMIN_USER = (process.env.ADMIN_USER || 'Sapnap').toLowerCase();
 const ADMIN_PASS = process.env.ADMIN_PASS || '2132';
@@ -35,19 +37,32 @@ const peers = new Map();
 let seq = 0, dirty = false;
 
 // A peer is either a socket or a poller; everything above this line only knows about `send` and `drop`.
+// Answering a poller wakes the browser to ask again at once, so an eager poke per message turns four moving
+// players into hundreds of requests a second. One answer per LP_PACE keeps motion smooth and the camp cheap.
+function poke(p) {
+  if (p.ws) return;
+  const due = (p.pokedAt || 0) + LP_PACE - Date.now();
+  if (due <= 0) { p.pokedAt = Date.now(); for (const w of p.waiters.slice()) w(); return; }
+  if (p.pokeT) return;
+  p.pokeT = setTimeout(() => { p.pokeT = null; p.pokedAt = Date.now(); for (const w of p.waiters.slice()) w() }, due);
+}
 function send(p, str) {
   if (p.ws) { if (p.ws.readyState === 1) p.ws.send(str); return; }
-  p.box.push(str);
-  if (p.wake) p.wake();
+  // A poller only needs the newest picture of the camp, not every one drawn since its last request.
+  if (str.startsWith('{"t":"peers"') && p.box.length && p.box[p.box.length - 1].startsWith('{"t":"peers"')) p.box[p.box.length - 1] = str;
+  else p.box.push(str);
+  poke(p);
 }
 function drop(p) {
   peers.delete(p.id);
   if (p.ws) { try { p.ws.close(4001, 'kicked'); } catch (e) {} }
-  if (p.wake) p.wake();
+  else poke(p);
 }
 function newId() { return 'p' + (++seq).toString(36) + Math.random().toString(36).slice(2, 6); }
+// A browser that hangs up mid-poll gets a fresh request a moment later, so more than one can be waiting on the
+// same peer at once. Every waiter registers itself here; only the one still holding a live response answers.
 function blank(id, ws) {
-  return { id, ws, box: ws ? null : [], wake: null, busy: false, presence: {}, updatedAt: Date.now(),
+  return { id, ws, box: ws ? null : [], waiters: [], pokedAt: 0, pokeT: null, presence: {}, updatedAt: Date.now(),
     lastReq: Date.now(), alive: true, count: 0, windowStart: Date.now(), admin: false, chatCount: 0, chatStart: Date.now() };
 }
 
@@ -60,6 +75,9 @@ function handleMessage(me, raw) {
   if (m.t === 'presence' && m.p && typeof m.p === 'object' && !Array.isArray(m.p)) {
     if (JSON.stringify(m.p).length > MAX_PRESENCE) return;
     me.presence = m.p; me.updatedAt = now; dirty = true;
+  } else if (m.t === 'bye') {
+    // A tab that is closing says this on its way out; without it a reload leaves a copy of the player behind.
+    me.bye = true; peers.delete(me.id); dirty = true;
   } else if (m.t === 'emit' && typeof m.topic === 'string' && m.topic.length < 64) {
     const out = JSON.stringify({ t: 'msg', topic: m.topic, data: m.data, peer: me.id });
     if (out.length > MAX_MSG) return;
@@ -123,7 +141,14 @@ async function longPoll(req, res, reply) {
   let p = b && b.peer ? peers.get(String(b.peer)) : null;
   if (p && p.ws) p = null;                       // a dead socket's id is not a ticket into someone else's camp
   const fresh = !p;
-  if (fresh) { p = blank(newId(), null); peers.set(p.id, p); dirty = true; send(p, JSON.stringify({ t: 'welcome', peer: p.id })); }
+  if (fresh && peers.size >= MAX_PEERS) { reply(503, 'application/json', '{"error":"full"}'); return; }
+  if (fresh) {
+    // Register the poller under the id it already has, so a first request cut short before the reply lands does
+    // not make the camp mint a replacement player every hundred milliseconds.
+    const want = String(b.peer || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24);
+    p = blank(want && !peers.has(want) ? want : newId(), null);
+    peers.set(p.id, p); dirty = true; send(p, JSON.stringify({ t: 'welcome', peer: p.id }));
+  }
   p.lastReq = Date.now();
   // Only a changed presence is worth a broadcast: re-sending the same one every poll would keep the whole
   // camp awake at 20Hz and turn a quiet lobby into a request storm.
@@ -131,15 +156,20 @@ async function longPoll(req, res, reply) {
     handleMessage(p, JSON.stringify({ t: 'presence', p: b.p }));
   }
   if (Array.isArray(b.s)) for (const m of b.s.slice(0, 40)) handleMessage(p, JSON.stringify(m));
-  const hold = !p.busy;                          // a superseded poll drains itself so the new one owns the wait
-  p.busy = true;
+  if (p.bye) { reply(200, 'application/json', '{"m":[]}'); return; }   // a farewell beacon: answer and let go
+  let gone = false;
+  req.on('close', () => { gone = true; poke(p); });   // the browser cut this poll short to send again
   const until = Date.now() + LP_HOLD;
-  while (hold && !p.box.length && Date.now() < until) {
-    await new Promise(r => { const to = setTimeout(() => { p.wake = null; r(); }, Math.max(50, until - Date.now())); p.wake = () => { clearTimeout(to); p.wake = null; r(); }; });
-    if (!peers.has(p.id)) break;                 // kicked or swept while we were waiting
+  while (!gone && !p.box.length && Date.now() < until) {
+    await new Promise(r => {
+      const off = () => { const i = p.waiters.indexOf(r); if (i >= 0) p.waiters.splice(i, 1); };
+      const to = setTimeout(() => { off(); r(); }, Math.max(50, until - Date.now()));
+      p.waiters.push(() => { clearTimeout(to); off(); r(); });
+    });
+    if (!peers.has(p.id)) break;                       // kicked or swept while we were waiting
   }
-  p.busy = false;
   const out = p.box.splice(0);
+  if (gone || res.writableEnded) { p.box.unshift(...out); poke(p); return; }  // hand undeliverable messages to the live poll
   reply(200, 'application/json', JSON.stringify({ peer: p.id, m: out.map(s => { try { return JSON.parse(s); } catch (e) { return null; } }).filter(Boolean) }));
 }
 
@@ -168,7 +198,7 @@ setInterval(() => {
 setInterval(() => {
   for (const p of peers.values()) {
     if (p.ws) { if (!p.alive) { p.ws.terminate(); continue; } p.alive = false; try { p.ws.ping(); } catch (e) {} }
-    else if (Date.now() - p.lastReq > LP_IDLE) { if (p.wake) p.wake(); peers.delete(p.id); }
+    else if (Date.now() - p.lastReq > (p.presence && p.presence.n ? LP_IDLE : 15000)) { if (!p.ws) poke(p); peers.delete(p.id); }
   }
 }, 20000);
 
