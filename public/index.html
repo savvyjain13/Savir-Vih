@@ -9,13 +9,17 @@
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Chakra+Petch:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-/* Render connector: gives the game the same room API it uses on claude.ai, backed by this site's own WebSocket server. */
+/* Render connector: gives the game the same room API it uses on claude.ai, backed by this site's own server. */
 (function(){if(window.claude)return;
  const peerCbs=[],connCbs=[],topicCbs={},chatCbs=[],authCbs=[],kickCbs=[];let ws=null,me=null,connected=false,list=[],myPres={},retry=0,flushT=null,myAdmin=false,kicked=false,admCred=null;const seen=new Map();
  const url=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
- // The hosted instance goes to sleep when nobody visits it, so the first socket of a session usually dies while
- // the origin is still booting. Probing /health both wakes it and tells "asleep" apart from "awake but blocked",
- // which are different messages to a player staring at a spinner.
+ /* Two transports. A WebSocket while the network lets the upgrade through, and HTTP long-polling for networks
+    that refuse it - school, office and hotel filters routinely allow every ordinary page while killing /ws.
+    Both carry identical server messages, so nothing above this knows which one is in use. */
+ let mode='ws',tries=0,lpId=null,box=[],ctl=null;
+ // The hosted instance goes to sleep when nobody visits it, so the first connection of a session usually dies
+ // while the origin is still booting. Probing /health both wakes it and tells "asleep" apart from
+ // "awake but blocked", which are different messages to a player staring at a spinner.
  let server='unknown',wakeT=null;
  function say(){connCbs.forEach(f=>{try{f(connected)}catch(e){console.error(e)}})}
  function probe(){fetch('/health',{cache:'no-store'}).then(r=>{const s=r.ok?'up':'down';if(s!==server){server=s;say()}}).catch(()=>{if(server!=='down'){server='down';say()}})}
@@ -27,40 +31,66 @@
  function fromServer(arr){return arr.map(p=>{if(p.peer===me)return{peer:p.peer,sameTab:true,isMe:true,kind:'user',admin:!!p.admin,presence:myPres,updatedAt:p.updatedAt};
   const raw=JSON.stringify(p.presence||{});const old=seen.get(p.peer);let obj;if(old&&old.raw===raw)obj=old.obj;else{obj=Object.freeze(p.presence||{});seen.set(p.peer,{raw,obj})}
   return{peer:p.peer,sameTab:false,kind:'user',admin:!!p.admin,presence:obj,updatedAt:p.updatedAt}})}
- function connect(){wake();try{ws=new WebSocket(url)}catch(e){setTimeout(connect,2000);return}
+ function post(o){if(mode==='lp'){if(o.t==='presence')return;box.push(o);if(ctl)try{ctl.abort()}catch(e){}return}
+  if(ws&&ws.readyState===1)try{ws.send(JSON.stringify(o))}catch(e){}}
+ function ingest(m){
+  if(m.t==='welcome'){me=m.peer;server='up';post({t:'presence',p:myPres});if(admCred)post({t:'auth',user:admCred.u,pass:admCred.p});setConn(true)}
+  else if(m.t==='peers')deliver(fromServer(m.peers||[]));
+  else if(m.t==='authok'){myAdmin=!!m.admin;authCbs.forEach(f=>{try{f(myAdmin)}catch(e){console.error(e)}})}
+  else if(m.t==='chat')chatCbs.forEach(f=>{try{f(m)}catch(e){console.error(e)}})
+  else if(m.t==='kicked')kicked=true;
+  else if(m.t==='msg')(topicCbs[m.topic]||[]).forEach(f=>{try{f({topic:m.topic,data:m.data,peer:m.peer,sameTab:false})}catch(e){console.error(e)}})}
+ function connect(){wake();tries++;
+  try{ws=new WebSocket(url)}catch(e){useLP();return}
+  // A cold instance refuses the first handshake or two; a filter refuses every one of them.
+  const guard=setTimeout(()=>{if(!me)useLP()},6000);
   ws.onopen=()=>{retry=0};
-  ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data)}catch(e){return}
-   if(m.t==='welcome'){me=m.peer;server='up';ws.send(JSON.stringify({t:'presence',p:myPres}));if(admCred)ws.send(JSON.stringify({t:'auth',user:admCred.u,pass:admCred.p}));setConn(true)}
-   else if(m.t==='peers')deliver(fromServer(m.peers||[]));
-   else if(m.t==='authok'){myAdmin=!!m.admin;authCbs.forEach(f=>{try{f(myAdmin)}catch(e){console.error(e)}})}
-   else if(m.t==='chat')chatCbs.forEach(f=>{try{f(m)}catch(e){console.error(e)}})
-   else if(m.t==='kicked')kicked=true;
-   else if(m.t==='msg')(topicCbs[m.topic]||[]).forEach(f=>{try{f({topic:m.topic,data:m.data,peer:m.peer,sameTab:false})}catch(e){console.error(e)}})};
-  ws.onclose=ev=>{me=null;setConn(false);deliver([]);if(kicked){kicked=false;kickCbs.forEach(f=>{try{f(ev.code)}catch(e){console.error(e)}});retry=0;setTimeout(connect,1200);return}setTimeout(connect,Math.min(8000,500*Math.pow(2,retry++)))};ws.onerror=()=>{}}
- function flush(){flushT=null;if(ws&&ws.readyState===1&&me)ws.send(JSON.stringify({t:'presence',p:myPres}))}
+  ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data)}catch(e){return}clearTimeout(guard);ingest(m)};
+  ws.onclose=ev=>{clearTimeout(guard);if(mode!=='ws')return;me=null;setConn(false);deliver([]);
+   if(kicked){kicked=false;kickCbs.forEach(f=>{try{f(ev.code)}catch(e){console.error(e)}});retry=0;setTimeout(connect,1200);return}
+   if(tries>=3&&server==='up'){useLP();return}
+   setTimeout(connect,Math.min(8000,500*Math.pow(2,retry++)))};ws.onerror=()=>{}}
+ function useLP(){if(mode==='lp')return;mode='lp';try{sessionStorage.setItem('svlp','1')}catch(e){}
+  if(ws){try{ws.onclose=null;ws.onmessage=null;ws.onerror=null;ws.close()}catch(e){}ws=null}
+  pump()}
+ async function pump(){let fails=0;
+  while(mode==='lp'){const out=box;box=[];const c=new AbortController();ctl=c;let j=null;
+   // One request per round trip: it carries our presence and anything we want to say, and the server holds it
+   // open until there is something new, so an idle camp costs almost no traffic.
+   try{const r=await fetch('/lp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({peer:lpId,p:myPres,s:out}),signal:c.signal,cache:'no-store'});j=await r.json()}catch(e){j=null}
+   if(ctl===c)ctl=null;
+   if(!j||typeof j!=='object'){me=null;setConn(false);deliver([]);
+    if(++fails>=4){fails=0;tries=0;mode='ws';setTimeout(connect,400);return}await new Promise(r=>setTimeout(r,1800));continue}
+   fails=0;if(j.peer)lpId=j.peer;if(j.peer&&!me)me=j.peer;
+   if(kicked){kicked=false;lpId=null;me=null;setConn(false);deliver([]);kickCbs.forEach(f=>{try{f(4001)}catch(e){}})}
+   (j.m||[]).forEach(ingest);if(me&&!connected)setConn(true)}}
+ function flush(){post({t:'presence',p:myPres})}
  const room={
   presence(patch){const n=Object.assign({},myPres);for(const k in patch){if(patch[k]===null)delete n[k];else n[k]=patch[k]}myPres=n;if(!flushT)flushT=setTimeout(flush,35);return Promise.resolve()},
   onPeers(f){peerCbs.push(f);setTimeout(()=>f({peers:list,joined:list,left:[],updated:[]}),0);return()=>{}},
   onConnection(f){connCbs.push(f);setTimeout(()=>f(connected),0);return()=>{}},
   on(t,f){(topicCbs[t]=topicCbs[t]||[]).push(f);return()=>{}},
-  emit(t,d){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'emit',topic:t,data:d}));return Promise.resolve()},
-  // A credential entered while the socket is still down is kept and replayed on the next 'welcome',
+  emit(t,d){post({t:'emit',topic:t,data:d});return Promise.resolve()},
+  // A credential entered while the connection is still down is kept and replayed on the next 'welcome',
   // so waking a sleeping server does not swallow the unlock. Clearing it (empty user) revokes for good.
-  auth(user,pass){const u=String(user||'');admCred=u?{u,p:String(pass||'')}:null;const open=!!(ws&&ws.readyState===1);
-   if(open)ws.send(JSON.stringify({t:'auth',user:u,pass:String(pass||'')}));return Promise.resolve(open)},
+  auth(user,pass){const u=String(user||'');admCred=u?{u,p:String(pass||'')}:null;
+   if(connected)post({t:'auth',user:u,pass:String(pass||'')});return Promise.resolve(connected)},
   onAuth(f){authCbs.push(f);setTimeout(()=>f(myAdmin),0);return()=>{}},
   isAdmin(){return myAdmin},
-  chat(text){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'chat',text:text}))},
+  chat(text){post({t:'chat',text:text})},
   onChat(f){chatCbs.push(f);return()=>{}},
-  purge(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'purge'}))},
-  kick(peer){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'kick',peer:peer}))},
+  purge(){post({t:'purge'})},
+  kick(peer){post({t:'kick',peer:peer})},
   onKick(f){kickCbs.push(f);return()=>{}},
   connected(){return connected},peers(){return list},
   // 'online' = playing with others. 'asleep' = the host is cold-booting and will answer shortly.
-  // 'blocked' = the host answers HTTP but refuses the socket, which no amount of waiting fixes.
+  // 'blocked' = the host answers HTTP but refuses both transports, which no amount of waiting fixes.
   status(){return connected?'online':server==='up'?'blocked':server==='down'?'asleep':'checking'},
-  retry(){if(ws){try{ws.onclose=null;ws.onerror=null;ws.close()}catch(e){}}retry=0;server='unknown';wake();connect()}};
- window.claude={use:async n=>n==='room'?room:null};connect()})();
+  transport(){return mode==='lp'?'poll':'socket'},
+  retry(){if(mode==='lp'){if(ctl)try{ctl.abort()}catch(e){}return}
+   if(ws){try{ws.onclose=null;ws.onerror=null;ws.close()}catch(e){}}tries=0;retry=0;server='unknown';wake();connect()}};
+ window.claude={use:async n=>n==='room'?room:null};
+ try{if(sessionStorage.getItem('svlp')==='1')useLP();else connect()}catch(e){connect()}})();
 </script>
 
 <style>
