@@ -43,8 +43,10 @@
    if(o.t==='presence'){recall();return}
    box.push(o);hangUp();return}
   if(ws&&ws.readyState===1)try{ws.send(JSON.stringify(o))}catch(e){}}
- let lastPollAt=0,presT=null,selfAbort=null;
- function hangUp(){if(!ctl)return;selfAbort=ctl;try{ctl.abort()}catch(e){}}
+ let lastPollAt=0,presT=null,selfAbort=null,hdrOk=null;
+ // Cutting a poll short is only safe before the server has started answering. Once the reply is on its way, the
+ // messages are already ours and hanging up would throw away chat, kicks and the camp roster.
+ function hangUp(){if(!ctl||hdrOk===ctl)return;selfAbort=ctl;try{ctl.abort()}catch(e){}}
  function recall(){if(presT)return;const wait=Math.max(0,180-(Date.now()-lastPollAt));presT=setTimeout(()=>{presT=null;hangUp()},wait)}
  function ingest(m){
   if(m.t==='welcome'){me=m.peer;server='up';post({t:'presence',p:myPres});if(admCred)post({t:'auth',user:admCred.u,pass:admCred.p});setConn(true)}
@@ -76,11 +78,11 @@
    lastPollAt=Date.now();lastSent=JSON.stringify(myPres);
    // One request per round trip: it carries our presence and anything we want to say, and the server holds it
    // open until there is something new, so an idle camp costs almost no traffic.
-   try{const r=await fetch('/lp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({peer:lpId,p:myPres,s:out}),signal:c.signal,cache:'no-store'});j=await r.json()}catch(e){ours=selfAbort===c}
+   try{const r=await fetch('/lp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({peer:lpId,p:myPres,s:out}),signal:c.signal,cache:'no-store'});hdrOk=c;j=await r.json()}catch(e){ours=selfAbort===c}
    if(ctl===c)ctl=null;
    // Hanging up on our own poll to say something is not a broken connection. Counting it as one is what made
    // friends blink out and the camp thrash between transports; ask again at once instead.
-   if(ours){if(selfAbort===c)selfAbort=null;if(out.length)box=out.concat(box);continue}
+   if(ours){if(selfAbort===c)selfAbort=null;continue}
    if(!j||typeof j!=='object'){me=null;full=false;setConn(false);deliver([]);
     // Only a long LP blackout is worth trying the socket again; a hiccup should not drop a working camp.
     if(++fails>=12){fails=0;tries=0;mode='ws';setTimeout(connect,400);return}await new Promise(r=>setTimeout(r,1800));continue}
