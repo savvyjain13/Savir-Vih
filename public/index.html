@@ -13,6 +13,13 @@
 (function(){if(window.claude)return;
  const peerCbs=[],connCbs=[],topicCbs={},chatCbs=[],authCbs=[],kickCbs=[];let ws=null,me=null,connected=false,list=[],myPres={},retry=0,flushT=null,myAdmin=false,kicked=false,admCred=null;const seen=new Map();
  const url=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
+ // The hosted instance goes to sleep when nobody visits it, so the first socket of a session usually dies while
+ // the origin is still booting. Probing /health both wakes it and tells "asleep" apart from "awake but blocked",
+ // which are different messages to a player staring at a spinner.
+ let server='unknown',wakeT=null;
+ function say(){connCbs.forEach(f=>{try{f(connected)}catch(e){console.error(e)}})}
+ function probe(){fetch('/health',{cache:'no-store'}).then(r=>{const s=r.ok?'up':'down';if(s!==server){server=s;say()}}).catch(()=>{if(server!=='down'){server='down';say()}})}
+ function wake(){if(wakeT)return;probe();wakeT=setInterval(()=>{if(connected){clearInterval(wakeT);wakeT=null;return}probe()},4000)}
  function setConn(c){if(connected===c)return;connected=c;connCbs.forEach(f=>{try{f(c)}catch(e){console.error(e)}})}
  function deliver(next){const prev=new Map(list.map(p=>[p.peer,p])),nm=new Map(next.map(p=>[p.peer,p]));
   const ch={peers:next,joined:next.filter(p=>!prev.has(p.peer)),left:list.filter(p=>!nm.has(p.peer)),updated:next.filter(p=>prev.has(p.peer)&&prev.get(p.peer).presence!==p.presence)};list=next;
@@ -20,10 +27,10 @@
  function fromServer(arr){return arr.map(p=>{if(p.peer===me)return{peer:p.peer,sameTab:true,isMe:true,kind:'user',admin:!!p.admin,presence:myPres,updatedAt:p.updatedAt};
   const raw=JSON.stringify(p.presence||{});const old=seen.get(p.peer);let obj;if(old&&old.raw===raw)obj=old.obj;else{obj=Object.freeze(p.presence||{});seen.set(p.peer,{raw,obj})}
   return{peer:p.peer,sameTab:false,kind:'user',admin:!!p.admin,presence:obj,updatedAt:p.updatedAt}})}
- function connect(){try{ws=new WebSocket(url)}catch(e){setTimeout(connect,2000);return}
+ function connect(){wake();try{ws=new WebSocket(url)}catch(e){setTimeout(connect,2000);return}
   ws.onopen=()=>{retry=0};
   ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data)}catch(e){return}
-   if(m.t==='welcome'){me=m.peer;ws.send(JSON.stringify({t:'presence',p:myPres}));if(admCred)ws.send(JSON.stringify({t:'auth',user:admCred.u,pass:admCred.p}));setConn(true)}
+   if(m.t==='welcome'){me=m.peer;server='up';ws.send(JSON.stringify({t:'presence',p:myPres}));if(admCred)ws.send(JSON.stringify({t:'auth',user:admCred.u,pass:admCred.p}));setConn(true)}
    else if(m.t==='peers')deliver(fromServer(m.peers||[]));
    else if(m.t==='authok'){myAdmin=!!m.admin;authCbs.forEach(f=>{try{f(myAdmin)}catch(e){console.error(e)}})}
    else if(m.t==='chat')chatCbs.forEach(f=>{try{f(m)}catch(e){console.error(e)}})
@@ -48,7 +55,11 @@
   purge(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'purge'}))},
   kick(peer){if(ws&&ws.readyState===1)ws.send(JSON.stringify({t:'kick',peer:peer}))},
   onKick(f){kickCbs.push(f);return()=>{}},
-  connected(){return connected},peers(){return list}};
+  connected(){return connected},peers(){return list},
+  // 'online' = playing with others. 'asleep' = the host is cold-booting and will answer shortly.
+  // 'blocked' = the host answers HTTP but refuses the socket, which no amount of waiting fixes.
+  status(){return connected?'online':server==='up'?'blocked':server==='down'?'asleep':'checking'},
+  retry(){if(ws){try{ws.onclose=null;ws.onerror=null;ws.close()}catch(e){}}retry=0;server='unknown';wake();connect()}};
  window.claude={use:async n=>n==='room'?room:null};connect()})();
 </script>
 
@@ -431,7 +442,10 @@ function applyAdmin(){
  Prof.inv=Array.isArray(Prof.inv)?Prof.inv:[];
  for(const c in GEAR)for(const k in GEAR[c]){const id=c+':'+k;if(!Prof.inv.includes(id))Prof.inv.push(id)}
  Prof.sentries=Prof.sentries||{};
- for(const k of TKEYS)Prof.sentries[k]=Math.max(Prof.sentries[k]||0,MAX_COPIES);
+ // The grant unlocks sentries; it must never hand out copies, because stars are earned copies and
+ // five stars on everything made every troop look maxed. Undo the old force-max once per profile.
+ if(Prof.grantFix!==1){for(const k of TKEYS)if(Prof.sentries[k]>=MAX_COPIES)Prof.sentries[k]=1;Prof.grantFix=1}
+ for(const k of TKEYS)if(!Prof.sentries[k])Prof.sentries[k]=1;
  saveProf();
  if(PL.avatar)rebuildMyAvatar();
  if(H&&H.st==='play'&&S.admin&&H.wallet)walletSlot(S.myPeer,Prof.name||'Host').g=Math.max(walletSlot(S.myPeer).g,999999);
@@ -471,12 +485,12 @@ let lobbyErr='',lobbyDirty=false;
 function adminUnlockRow(){const pw=h('input',{class:'field',id:'admPass',type:'password',placeholder:'Admin password',autocomplete:'off'});
  const unlock=()=>{if(!S.room){toast('Multiplayer is not available in this copy of the game.');return}
   authTried=true;S.room.auth('Sapnap',pw.value);
-  toast(S.room.connected()?'Checking the admin password…':'The camp server is still waking up - you will unlock the moment it answers.')}
+  toast(S.room.connected()?'Checking the admin password…':S.room.status()==='blocked'?'The server is awake but this view cannot open a socket, so the password cannot be checked yet.':'The camp server is still waking up - you will unlock the moment it answers.')}
  pw.addEventListener('keydown',e=>{if(e.key==='Enter')unlock()});
  return [h('div',{class:'hd',style:'margin-top:8px',text:'Admin unlock'}),h('div',{class:'row'},h('div',{style:'flex:1'},pw),h('button',{class:'btn primary',onclick:unlock,text:'Unlock'})),h('div',{class:'muted',text:'The Sapnap account is password protected.'})]}
 function renderLobby(){if(S.view!=='lobby')return;const card=$('#lobbyCard');const ae=document.activeElement;if(ae&&card.contains(ae)&&ae.tagName==='INPUT'){lobbyDirty=true;return}
  const online=!!S.room;const parts=[h('div',null,h('div',{class:'title',text:'SAVOUR VIH'}),h('div',{class:'subtitle',text:'ZOMBIE DEFENSE · CO-OP SURVIVAL'})),
-  h('div',{class:'status'+(online&&S.connected?'':' off')},h('i'),online?(S.connected?others().filter(p=>p.presence&&p.presence.n).length+1+' online':'Connecting…'):'Offline: solo play only. Multiplayer needs the published page.')];
+  h('div',{class:'status'+(online&&S.connected?'':' off')},h('i'),online?(S.connected?others().filter(p=>p.presence&&p.presence.n).length+1+' online':({asleep:'Camp server asleep…',blocked:'Camp server unreachable from here',checking:'Checking camp server…'}[S.room.status()]||'Connecting…')):'Offline: solo play only. Multiplayer needs the published page.')];
  const needsUnlock=!!(Prof.name&&Prof.name.toLowerCase()==='sapnap'&&!S.admin);
  // username
  if(!Prof.name||renderLobby.editName){const inp=h('input',{class:'field',id:'nameIn',maxlength:16,value:Prof.name||'',placeholder:'Choose a username',autocomplete:'off',spellcheck:'false'});const err=h('div',{class:'err'});
@@ -491,8 +505,11 @@ function renderLobby(){if(S.view!=='lobby')return;const card=$('#lobbyCard');con
  else parts.push(h('div',{class:'row'},h('span',{class:'dot',style:'background:'+Prof.color}),h('span',null,'Playing as ',h('b',{text:Prof.name})),h('span',{class:'muted',id:'profStats',text:'· Coins '+(Prof.coins||0)+' · '+(Prof.games||0)+' matches'+(Prof.best&&Object.keys(Prof.best).length?' · best: '+Object.entries(Prof.best).map(([k,v])=>(DIFF[k]?DIFF[k].name:k)+' wave '+v).join(', '):'')}),S.rm?null:h('button',{class:'btn',style:'margin-left:auto;padding:5px 10px',onclick:()=>{renderLobby.editName=true;renderLobby()},text:'Change'})));
  if(needsUnlock&&Prof.name&&!renderLobby.editName)parts.push(...adminUnlockRow());
  const r=S.rm;
- if(Prof.name&&!renderLobby.editName){parts.push(h('div',{class:'row',style:'gap:10px'},h('span',{class:'spin'}),h('b',{text:!S.capsReady?'Starting up…':(S.room&&!S.connected&&!S.roomErr?'Connecting to the multiplayer server…':'Ready to deploy.')})));
-  if(S.roomErr)parts.push(h('div',{class:'muted',text:'Multiplayer is not reachable from this view, so the camp will hold you alone.'}));
+ if(Prof.name&&!renderLobby.editName){const st=S.room?S.room.status():'none';
+  // Never leave the player on a bare spinner: each state says what is actually happening and what to do.
+  const msg=st==='online'?'Ready to deploy.':st==='asleep'?'The camp server is asleep. Waking it takes about half a minute - keep this open.':st==='blocked'?'The camp server is awake but refuses the connection from this view, so the camp will hold you alone.':st==='checking'?'Checking the camp server…':'Connecting to the camp server…';
+  parts.push(h('div',{class:'row',style:'gap:10px'},st==='online'?h('span',{class:'dot',style:'background:#5ae08a'}):h('span',{class:'spin'}),h('b',{text:!S.capsReady?'Starting up…':msg})));
+  if(st!=='none'&&st!=='online')parts.push(h('div',{class:'row'},h('button',{class:'btn',style:'padding:5px 12px',onclick:()=>{S.room.retry();lobbyDirty=true;renderLobby()},text:'Try the camp server again'})));
   if(S.admin)parts.push(h('div',{class:'row'},h('span',{class:'tag host',text:'ADMIN'}),h('span',{class:'muted',text:'Fly F · Spectate V · kick + chat tools'})));
   parts.push(h('div',{class:'row'},h('button',{class:'btn primary',onclick:()=>enterCamp(),text:'Enter the main camp'})))}
  parts.push(h('div',{class:'row'},h('button',{class:'btn',onclick:openSettings,text:'Settings'}),h('button',{class:'btn',onclick:()=>{startTutorialNext=true;toast('The tutorial will play when your next game starts.')},text:'Replay tutorial'}),null));
@@ -1004,14 +1021,22 @@ function rig(o){const g=new THREE.Group();const body=new THREE.Group();g.add(bod
  return{g,body,hips,torso,head,jaw,skull,legL:L,legR:Rr,armL:AL,armR:AR,s}}
 
 /* ---------- zombies ---------- */
+const ETYPES=['shambler','runner','brute','crawler','screamer','boss','husk','leaper','spitter'];
 const ENEMIES={
  shambler:{name:'Shambler',hp:70,speed:2.2,dmg:1,bounty:10},
  runner:{name:'Runner',hp:40,speed:4.6,dmg:1,bounty:8},
  brute:{name:'Brute',hp:360,speed:1.5,dmg:3,bounty:30},
  crawler:{name:'Crawler',hp:55,speed:2.8,dmg:1,bounty:9},
  screamer:{name:'Screamer',hp:110,speed:2,dmg:1,bounty:20},
- boss:{name:'Abomination',hp:2600,speed:1,dmg:10,bounty:250,boss:true}};
-const ETYPES=['shambler','runner','brute','crawler','screamer','boss'];
+ boss:{name:'Abomination',hp:2600,speed:1,dmg:10,bounty:250,boss:true},
+ // armour is the share of single-shot damage that plating absorbs; splash and chain ignore it.
+ husk:{name:'Husk',hp:230,speed:1.9,dmg:2,bounty:28,armor:.62},
+ leaper:{name:'Leaper',hp:80,speed:3.2,dmg:1,bounty:16},
+ spitter:{name:'Spitter',hp:150,speed:1.7,dmg:1,bounty:26}};
+// Shown once per match the first time your squad meets that type - the counter matters more than the health bar.
+const ZTIP={husk:'HUSK - riot plating shrugs off rifles. Use grenades, rockets, fire or Tesla.',
+ leaper:'LEAPER - it bounds clean over your front line. Kill it while it is still far away.',
+ spitter:'SPITTER - its acid silences a sentry for seconds. Snipe it before it reaches your guns.'};
 const SKINS=['#9aa488','#8a9678','#a8a694','#8e8a7a','#96a08c'];
 function buildZombie(type){const skinMat=M('skin',{color:SKINS[Math.floor(R(SKINS.length))]}).clone();const tint=(c)=>M('cloth',{color:c});
  let Z;
@@ -1026,8 +1051,25 @@ function buildZombie(type){const skinMat=M('skin',{color:SKINS[Math.floor(R(SKIN
   part(Z.torso,box(.8,.5,.5),M('rustDeep'),0,.34,0);for(let i=0;i<5;i++)part(Z.torso,cyl(.025,.025,.6,6),M('steel'),-.24+i*.12,.6,-.2,-.6+R(.4),0,R(.6)-.3);
   const club=new THREE.Group();Z.armR.fo.add(club);part(club,cyl(.05,.07,.9,8),M('rustDeep'),0,-.5,.15,.3);part(club,box(.3,.3,.3),M('rust'),0,-.9,.28,.4,.3,0);part(club,box(.12,.34,.12),M('steel'),0,-.9,.28,0,.8,.3);
   part(Z.head,box(.3,.16,.1),M('olive'),0,.14,.15);for(const s of [-1,1])part(Z.torso,box(.34,.22,.4),M('rust'),s*.5,.6,0,0,0,s*.35)}
+ if(type==='husk'){Z=rig({skinMat,top:tint('#4a4a42'),bottom:tint('#33342c'),chest:1.22,limb:1.05,head:.95,hem:true});
+  Z.torso.rotation.x=.16;
+  // Riot plating reads as "rifle rounds do nothing": chest plate, pauldrons and a visored helm.
+  part(Z.torso,box(.6,.48,.4),M('steel'),0,.34,-.03);part(Z.torso,box(.66,.09,.46),M('rustDeep'),0,.6,-.03);
+  for(const sx of [-1,1])part(Z.torso,box(.28,.2,.34),M('steel'),sx*.44,.5,0,0,0,sx*.26);
+  part(Z.head,box(.32,.19,.34),M('steel'),0,.17,.02);part(Z.head,box(.28,.05,.05),glow('#ff5a3a',.8),0,.13,.19,0,0,0,false)}
+ if(type==='leaper'){Z=rig({skinMat,top:tint('#5a4652'),bottom:tint('#2e2a36'),limb:1.3,chest:.85,head:.9,s:.94});
+  Z.torso.rotation.x=.5;Z.head.rotation.x=-.42;Z.legL.th.rotation.x=.55;Z.legR.th.rotation.x=.55;
+  Z.armL.up.rotation.x=-2.5;Z.armR.up.rotation.x=-2.5;Z.armL.fo.rotation.x=-.5;Z.armR.fo.rotation.x=-.5;
+  part(Z.torso,box(.26,.14,.2),M('olive'),0,.44,-.18)}
+ if(type==='spitter'){skinMat.color.set('#7f8f4c');Z=rig({skinMat,top:tint('#3e4a32'),bottom:tint('#32362a'),chest:.92,head:1.06,limb:.9,hem:true});
+  Z.torso.rotation.x=-.16;Z.head.rotation.x=.2;
+  // Acid sacs glow so players learn to kill these before the ones that just bite.
+  part(Z.torso,sph(.19,10,8),col('#b8e04a',{emissive:0x39540a,roughness:.5}),-.21,.4,-.2);
+  part(Z.torso,sph(.16,10,8),col('#a8d044',{emissive:0x39540a,roughness:.5}),.2,.34,-.22);
+  part(Z.torso,sph(.13,10,8),col('#c8ea5a',{emissive:0x39540a,roughness:.5}),0,.5,-.19);
+  part(Z.head,cyl(.08,.13,.28,8),col('#9ab04a',{roughness:.7}),0,.14,.15,-.75)}
  Z.type=type;Z.skinMat=skinMat;Z.phase=R(6);Z.hit=0;Z.dead=0;
- const hb=new THREE.SpriteMaterial({map:null,depthWrite:false,transparent:true});Z.bar=new THREE.Sprite(hb);Z.hb=hb;Z.hpb=-1;const bh={boss:4.6,brute:2.7,crawler:1.1}[type]||2.1;Z.bar.position.y=bh;Z.bar.scale.set(type==='boss'?2.4:1.1,type==='boss'?.24:.14,1);Z.bar.visible=false;Z.g.add(Z.bar);
+ const hb=new THREE.SpriteMaterial({map:null,depthWrite:false,transparent:true});Z.bar=new THREE.Sprite(hb);Z.hb=hb;Z.hpb=-1;const bh={boss:4.6,brute:2.7,crawler:1.1,husk:2.4,spitter:2.35}[type]||2.1;Z.bar.position.y=bh;Z.bar.scale.set(type==='boss'?2.4:1.1,type==='boss'?.24:.14,1);Z.bar.visible=false;Z.g.add(Z.bar);
  return Z}
 function setZombieHp(Z,frac){const b=Math.round(clamp(frac,0,1)*20);Z.bar.visible=b<20;if(b===Z.hpb)return;Z.hpb=b;if(Z.hb.map)Z.hb.map.dispose();Z.hb.map=canvasTex(64,10,(x)=>{x.fillStyle='rgba(10,8,6,.75)';x.fillRect(0,0,64,10);x.fillStyle=b>10?'#8ab04a':(b>5?'#d8a040':'#c8402a');x.fillRect(1,1,62*b/20,8)});Z.hb.needsUpdate=true}
 function animateZombie(Z,dt,moving,fl){const t=Z.type,sp=ENEMIES[t].speed;Z.phase+=dt*(moving?sp*(t==='runner'?1.5:t==='crawler'?1.8:1.4):.8);const p=Z.phase,s=Math.sin(p),c=Math.cos(p);
@@ -1038,8 +1080,17 @@ function animateZombie(Z,dt,moving,fl){const t=Z.type,sp=ENEMIES[t].speed;Z.phas
  if(t==='brute'||t==='boss'){L.th.rotation.x=s*.4;Rr.th.rotation.x=-s*.4;L.sh.rotation.x=Math.max(0,-s)*.5;Rr.sh.rotation.x=Math.max(0,s)*.5;AL.up.rotation.x=-s*.35;AR.up.rotation.x=s*.35-(t==='boss'?.3:0);AL.fo.rotation.x=-.4;AR.fo.rotation.x=-.5;Z.torso.rotation.x=.18;Z.hips.position.y=.95-Math.abs(s)*.06;Z.torso.rotation.y=s*.08;
   if(t==='boss'&&fl&2){AL.up.rotation.x=-2.9;AR.up.rotation.x=-2.9;AL.fo.rotation.x=0;AR.fo.rotation.x=0;Z.torso.rotation.x=-.2;Z.jaw.rotation.x=.4}else if(t==='boss')Z.jaw.rotation.x=.1}
  if(t==='crawler'){AL.up.rotation.x=-2.7+s*.55;AR.up.rotation.x=-2.7-s*.55;AL.fo.rotation.x=-.3+Math.max(0,s)*.5;AR.fo.rotation.x=-.3+Math.max(0,-s)*.5;L.sh.rotation.x=.2+c*.15;Rr.sh.rotation.x=.2-c*.15;Z.torso.rotation.z=s*.12;Z.hips.position.y=.34+Math.abs(s)*.03}
+ if(t==='husk'){L.th.rotation.x=s*.32;Rr.th.rotation.x=-s*.32;L.sh.rotation.x=Math.max(0,-s)*.4;Rr.sh.rotation.x=Math.max(0,s)*.4;
+  AR.up.rotation.x=-1.55+c*.06;AR.fo.rotation.x=-.55;AL.up.rotation.x=-1.45-c*.06;AL.fo.rotation.x=-.6;Z.torso.rotation.z=s*.05;Z.head.rotation.x=.1;Z.hips.position.y=.95-Math.abs(c)*.03}
+ if(t==='leaper'){const air=fl&32;const k=air?1:0;
+  L.th.rotation.x=s*.7-k*.9;Rr.th.rotation.x=-s*.7-k*.9;L.sh.rotation.x=Math.max(0,-s)*.9+k*.7;Rr.sh.rotation.x=Math.max(0,s)*.9+k*.7;
+  AL.up.rotation.x=-1.1-s*.5-k*1.6;AR.up.rotation.x=-1.1+s*.5-k*1.6;AL.fo.rotation.x=-.5;AR.fo.rotation.x=-.5;
+  Z.hips.position.y=.95+Math.abs(s)*.09+k*.34;Z.torso.rotation.x=.5-k*.35}
+ if(t==='spitter'){const up=fl&64;L.th.rotation.x=s*.3;Rr.th.rotation.x=-s*.3;L.sh.rotation.x=Math.max(0,-s)*.35;Rr.sh.rotation.x=Math.max(0,s)*.35;
+  AR.up.rotation.x=-.5-c*.15+(up?-.9:0);AR.fo.rotation.x=-.35;AL.up.rotation.x=-.4+c*.15+(up?-.8:0);AL.fo.rotation.x=-.3;
+  Z.torso.rotation.x=-.16+(up?-.3:0);Z.head.rotation.x=.2+(up?.55:0);Z.jaw.rotation.x=up?.5:.08;Z.hips.position.y=.95-Math.abs(c)*.03}
  // hit reaction: flash + jolt
- if(Z.hit>0){Z.hit=Math.max(0,Z.hit-dt);const k=Z.hit/.18;Z.skinMat.emissive.setRGB(k*.9,k*.3,k*.2);Z.body.position.z=-k*.12*(t==='boss'?.4:1);Z.torso.rotation.x+=k*.25}else{Z.skinMat.emissive.setRGB(0,0,0);Z.body.position.z=0}}
+ if(Z.hit>0){Z.hit=Math.max(0,Z.hit-dt);const k=Z.hit/.18;Z.skinMat.emissive.setRGB(k*.9,k*.3,k*.2);Z.body.position.z=-k*.12*(t==='boss'?.4:1);Z.torso.rotation.x+=k*.25}else{Z.skinMat.emissive.setRGB(Z.el?.5:0,Z.el?.24:0,0);Z.body.position.z=0}}
 
 /* ---------- survivor (player) ---------- */
 function makeSurvivor(accent,name,showLabel,eq){eq=eq||DEF_EQ;const jc=(GEAR.jacket[eq.jacket]||GEAR.jacket.olive).c,sc=(GEAR.scarf[eq.scarf]||GEAR.scarf.amber).c;
@@ -1346,7 +1397,7 @@ function campInteract(){if(OPEN&&OPEN.popped&&Math.hypot(PL.x-OPEN.spot.x,PL.z-O
 /* ============ difficulty & host-authoritative simulation ============ */
 const DIFF={easy:{name:'Easy',waves:8,hp:.75,gold:420,reward:1},normal:{name:'Normal',waves:10,hp:1,gold:350,reward:1.6},hard:{name:'Hard',waves:12,hp:1.35,gold:300,reward:2.5}};
 let H=null;
-function initGame(){const df=DIFF[S.rm&&S.rm.df]?S.rm.df:'normal';const D=DIFF[df];H={st:'play',map:(S.rm&&S.rm.map)||'outpost',df,wt:D.waves,wave:0,phase:'count',cdEnd:now()+35000,wallet:{},base:20,maxBase:20,kills:0,towers:[],en:[],q:[],nid:1,gid:S.rm?S.rm.gid:0,wd:0,as:!!prefs.autoSkip};
+function initGame(){const df=DIFF[S.rm&&S.rm.df]?S.rm.df:'normal';const D=DIFF[df];H={st:'play',map:(S.rm&&S.rm.map)||'outpost',df,wt:D.waves,wave:0,mod:null,phase:'count',cdEnd:now()+35000,wallet:{},base:20,maxBase:20,kills:0,towers:[],en:[],q:[],nid:1,gid:S.rm?S.rm.gid:0,wd:0,as:!!prefs.autoSkip};
  for(const m of roomMembers())walletSlot(m.peer,nameOf(m));
  if(!Object.keys(H.wallet).length)walletSlot(S.myPeer,Prof.name||'Host')}
 function nameOf(m){return String((m&&m.presence&&m.presence.n)||(m&&m.me&&Prof.name)||'Survivor').slice(0,16)}
@@ -1355,30 +1406,67 @@ function walletSlot(peer,name){if(!H.wallet)H.wallet={};const k=String(peer);let
 function share(n){if(!H||!H.wallet)return;const k=Object.keys(H.wallet),s=Math.max(1,k.length),q=Math.floor(n/s),r=n-q*s;
  k.forEach((id,i)=>{H.wallet[id].g+=q+(i<r?1:0)})}
 function myBalance(V){if(!V||!V.ws)return 0;const w=V.ws[String(S.myPeer)];return w==null?0:w}
-function buildWave(w,total){const list=[];const add=(t,n)=>{for(let i=0;i<n;i++)list.push(t)};add('shambler',5+2*w);if(w>=2)add('runner',1+w);if(w>=3)add('crawler',w);if(w>=4)add('brute',Math.floor((w-2)/2));if(w>=5)add('screamer',Math.floor(w/4));
+/* Past the halfway mark a wave must change shape, not just grow. Both the host and the clients derive the
+   modifier from the wave number, so it costs nothing on the wire. */
+const WAVE_MODS=['frenzy','herd','thickhide','elites','desperation'];
+const MODS={frenzy:{n:'FRENZY',c:'#ff7a2a',d:'they are surging - everything moves a fifth faster'},
+ herd:{n:'THE HERD',c:'#d99a3a',d:'far more of them, each one frailer'},
+ thickhide:{n:'THICKHIDE',c:'#4a9ae8',d:'husks lead the wave - plating eats small-arms fire, use splash'},
+ elites:{n:'ELITES',c:'#b86ae0',d:'every third zombie is an elite: bigger, faster, 80 percent more health'},
+ desperation:{n:'DESPERATION',c:'#5ae0f0',d:'screamers and spitters everywhere, plus a mini abomination'},
+ finale:{n:'FINAL SURGE',c:'#c8402a',d:'Abominations and an elite escort'}};
+function waveMod(w,total){if(w>=total)return 'finale';const first=Math.max(4,Math.ceil(total*.55));
+ return w<first?null:WAVE_MODS[(w-first)%WAVE_MODS.length]}
+function buildWave(w,total){const mod=waveMod(w,total),elite=mod==='elites'||mod==='finale',list=[];
+ const add=(t,n)=>{for(let i=0;i<n;i++)list.push(t)};
+ add('shambler',Math.round(5+1.7*w));if(w>=2)add('runner',1+w);if(w>=3){add('crawler',w);add('leaper',Math.floor((w-1)/2))}
+ if(w>=4){add('brute',Math.floor((w-2)/2));add('husk',Math.floor((w-2)/2))}
+ if(w>=5)add('screamer',Math.floor(w/4));if(w>=6)add('spitter',Math.floor((w-4)/2));
+ if(mod==='thickhide')add('husk',3+Math.floor(w/3));
+ if(mod==='desperation'){add('screamer',2);add('spitter',2+Math.floor(w/4));add('leaper',3)}
+ if(mod==='herd'){const n=Math.ceil(list.length*.45);for(let i=0;i<n;i++)list.push(list[i])}
  for(let i=list.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[list[i],list[j]]=[list[j],list[i]]}
- if(w===total){list.push('brute','brute','boss')}else if(w%5===0)list.push('boss');
- let t=now()+800;return list.map(type=>{const o={t,type,mini:type==='boss'&&w!==total};t+=type==='runner'?520:(type==='brute'||type==='boss'?1600:850);return o})}
-function startWave(){H.wave++;H.phase='wave';H.q=buildWave(H.wave,H.wt)}
+ if(mod==='finale')list.push('brute','brute','husk','husk','boss','boss');
+ else if(mod==='desperation')list.push('boss');
+ else if(w%5===0)list.push('boss');
+ let t=now()+800,k=0;
+ const q=list.map(type=>{const o={t,type,mini:type==='boss'&&mod!=='finale',elite:elite&&++k%3===0};
+  t+=(type==='runner'?520:type==='leaper'?600:(type==='brute'||type==='boss'||type==='husk'?1600:type==='spitter'?1150:850))*(mod==='herd'?.72:1);return o});
+ // One full Abomination, not three: the elite escort is already the test.
+ if(mod==='finale'){const bs=q.filter(o=>o.type==='boss');for(const o of bs.slice(1))o.mini=true}
+ return q}
+function startWave(){H.wave++;H.phase='wave';H.mod=waveMod(H.wave,H.wt);H.q=buildWave(H.wave,H.wt)}
+function hurt(e,dmg,pierce){const a=pierce?0:(ENEMIES[e.type].armor||0);e.hp-=dmg*(1-a)}
 function simHost(dt){if(!H||H.st!=='play')return;const tn=now();if(S.admin&&H.wallet)walletSlot(S.myPeer,Prof.name||'Host').g=Math.max(walletSlot(S.myPeer).g,999999);
  if(H.phase==='count'){if(tn>=H.cdEnd)startWave();return}
- const mult=(1+.2*(H.wave-1))*DIFF[H.df].hp;
- while(H.q.length&&H.q[0].t<=tn){const q=H.q.shift();const hp=Math.round(ENEMIES[q.type].hp*mult*(q.mini?.5:1));H.en.push({id:H.nid++,type:q.type,d:0,hp,max:hp,sb:0,fl:0,next:tn+3000+R(2000),until:0})}
+ // The curve compounds after wave 5 so the last third is a genuine climb rather than more of the same.
+ const mult=(1+.2*(H.wave-1)+.035*Math.pow(Math.max(0,H.wave-5),1.55))*DIFF[H.df].hp*(H.mod==='herd'?.85:1);
+ while(H.q.length&&H.q[0].t<=tn){const q=H.q.shift();const E=ENEMIES[q.type];
+  const hp=Math.round(E.hp*mult*(q.mini?.5:1)*(q.elite?1.8:1));
+  H.en.push({id:H.nid++,type:q.type,d:0,hp,max:hp,sb:0,fl:q.elite?16:0,next:tn+3000+R(2000),until:0})}
  for(const e of H.en){let stop=false;
   if(e.type==='screamer'){if(e.fl&1){if(tn>e.until)e.fl&=~1;else stop=true}else if(tn>e.next&&e.d>ENTRY_D){e.fl|=1;e.until=tn+1300;e.next=tn+7000;const p=pathPos(e.d);for(const o of H.en){const q=pathPos(o.d);if(Math.hypot(q.x-p.x,q.z-p.z)<7)o.sb=tn+4000}}}
   if(e.type==='boss'){if(e.fl&4&&tn>e.until2)e.fl&=~4;if(e.fl&2){stop=true;if(tn>e.until){e.fl&=~2;e.fl|=4;e.until2=tn+500;const p=pathPos(e.d);H.towers.forEach(t=>{if(t&&Math.hypot(t.x-p.x,t.z-p.z)<7)t.stun=tn+2500})}}else if(tn>e.next&&e.d>ENTRY_D+4){e.fl|=2;e.until=tn+1400;e.next=tn+9000}}
+  // Leapers close ground in bounds; spitters halt to acid a sentry into silence.
+  if(e.type==='leaper'&&tn>e.next&&e.d>ENTRY_D){e.fl|=32;e.until=tn+420;e.next=tn+2600+R(1400);e.d+=2.6}
+  if(e.type==='leaper'&&tn>e.until)e.fl&=~32;
+  if(e.type==='spitter'){if(e.fl&64){if(tn>e.until)e.fl&=~64;else stop=true}
+   else if(tn>e.next){e.next=tn+1400;const p=pathPos(e.d);let bt=null,bd=9;
+    H.towers.forEach(t=>{if(!t||t.stun&&tn<t.stun)return;const dd=Math.hypot(t.x-p.x,t.z-p.z);if(dd<bd){bd=dd;bt=t}});
+    if(bt&&e.d>ENTRY_D){e.fl|=64;e.until=tn+900;e.next=tn+6200+R(1600);bt.stun=tn+2300}}}
   const buff=tn<e.sb;e.fl=buff?(e.fl|8):(e.fl&~8);
-  if(!stop)e.d+=ENEMIES[e.type].speed*(buff?1.5:1)*dt;if(e.d>=PATH_LEN){e.done=true;H.base=Math.max(0,H.base-ENEMIES[e.type].dmg)}}
+  const el=e.fl&16;
+  if(!stop)e.d+=ENEMIES[e.type].speed*(buff?1.5:1)*(H.mod==='frenzy'?1.2:1)*(el?1.22:1)*dt;if(e.d>=PATH_LEN){e.done=true;H.base=Math.max(0,H.base-ENEMIES[e.type].dmg*(el?2:1))}}
  H.towers.forEach((t,i)=>{if(!t)return;t.cdLeft-=dt;if(t.cdLeft>0||(t.stun&&tn<t.stun))return;const st=tStat(t.type,t.lvl);const p=t;let best=null;
   const byHp=TOWERS[t.type].prefer==='hp';for(const e of H.en){if(e.done||e.hp<=0||e.d<ENTRY_D)continue;const ep=pathPos(e.d);if(Math.hypot(ep.x-p.x,ep.z-p.z)<=st.range&&(!best||(byHp?e.hp>best.hp:e.d>best.d)))best=e}
   if(!best)return;t.cdLeft=st.cd*(TOWERS[t.type].roof&&t.y>0?.5:1);t.tg=best.id;t.sh=(t.sh+1)%1000;
-  const TT=TOWERS[t.type],dmg=st.dmg*(1+.1*(t.st||0));if(TT.splash){const bp=pathPos(best.d);if(TT.delay)(H.gren=H.gren||[]).push({at:tn+TT.delay*1000,x:bp.x,z:bp.z,dmg,r:TT.splash});else for(const e of H.en){if(e.hp<=0)continue;const ep=pathPos(e.d);if(Math.hypot(ep.x-bp.x,ep.z-bp.z)<=TT.splash)e.hp-=dmg}}
-  else if(TT.chain){let cur=best,k=0;const hit=new Set();while(cur&&k<TT.chain){cur.hp-=dmg*Math.pow(.7,k);hit.add(cur);k++;const cp=pathPos(cur.d);let nb=null,nd=4.5;for(const e of H.en){if(hit.has(e)||e.hp<=0)continue;const ep=pathPos(e.d);const dd=Math.hypot(ep.x-cp.x,ep.z-cp.z);if(dd<nd){nd=dd;nb=e}}cur=nb}}else best.hp-=dmg});
- if(H.gren&&H.gren.length)H.gren=H.gren.filter(g=>{if(g.at>tn)return true;for(const e of H.en){if(e.hp<=0||e.done)continue;const ep=pathPos(e.d);if(Math.hypot(ep.x-g.x,ep.z-g.z)<=g.r)e.hp-=g.dmg}return false});
- for(const e of H.en)if(e.hp<=0&&!e.done){e.done=true;share(ENEMIES[e.type].bounty);H.kills++}
+  const TT=TOWERS[t.type],dmg=st.dmg*(1+.1*(t.st||0));if(TT.splash){const bp=pathPos(best.d);if(TT.delay)(H.gren=H.gren||[]).push({at:tn+TT.delay*1000,x:bp.x,z:bp.z,dmg,r:TT.splash});else for(const e of H.en){if(e.hp<=0)continue;const ep=pathPos(e.d);if(Math.hypot(ep.x-bp.x,ep.z-bp.z)<=TT.splash)hurt(e,dmg,true)}}
+  else if(TT.chain){let cur=best,k=0;const hit=new Set();while(cur&&k<TT.chain){hurt(cur,dmg*Math.pow(.7,k),true);hit.add(cur);k++;const cp=pathPos(cur.d);let nb=null,nd=4.5;for(const e of H.en){if(hit.has(e)||e.hp<=0)continue;const ep=pathPos(e.d);const dd=Math.hypot(ep.x-cp.x,ep.z-cp.z);if(dd<nd){nd=dd;nb=e}}cur=nb}}else hurt(best,dmg,false)});
+ if(H.gren&&H.gren.length)H.gren=H.gren.filter(g=>{if(g.at>tn)return true;for(const e of H.en){if(e.hp<=0||e.done)continue;const ep=pathPos(e.d);if(Math.hypot(ep.x-g.x,ep.z-g.z)<=g.r)hurt(e,g.dmg,true)}return false});
+ for(const e of H.en)if(e.hp<=0&&!e.done){e.done=true;share(Math.round(ENEMIES[e.type].bounty*(e.fl&16?1.8:1)));H.kills++}
  H.en=H.en.filter(e=>!e.done);
  if(H.base<=0){H.st='lost';pushPresence(true);return}
- if(!H.q.length&&!H.en.length){H.wd=H.wave;share(40+10*H.wave);if(H.wave>=H.wt)H.st='won';else if(H.as){startWave()}else{H.phase='count';H.cdEnd=tn+20000}pushPresence(true)}}
+ if(!H.q.length&&!H.en.length){H.wd=H.wave;share(40+10*H.wave+(H.mod?20:0));if(H.wave>=H.wt)H.st='won';else if(H.as){startWave()}else{H.phase='count';H.cdEnd=tn+20000}pushPresence(true)}}
 function hostAction(peer,d){const say=m=>{if(peer===S.myPeer)toast(m)};const adm=isAdminPeer(peer);
  if(d.a==='settings'){if(!S.rm)return;if(!adm&&peer!==S.myPeer)return;if(d.max!=null)S.rm.max=clamp(+d.max||MAXP,1,MAXP);if(d.map!==undefined)S.rm.map=d.map||null;if(d.df&&DIFF[d.df])S.rm.df=d.df;pushPresence(true);return}
  if(!H)return;
@@ -1437,20 +1525,26 @@ function syncRemote(dt){const seen=new Set();const k=1-Math.pow(.001,dt);
  for(const [id,A] of RAV)if(!seen.has(id)){scene.remove(A.ch.g);RAV.delete(id)}}
 
 /* ============ render sync from the shared state ============ */
-const TV=[],TBLOCK=[];const EV=new Map(),CORPSES=[];let lastBase=-1,lastWave=-1,lastPh=-1,endShownGid=-1;
+const TV=[],TBLOCK=[];const EV=new Map(),CORPSES=[],SEEN_T=new Set();let lastBase=-1,lastWave=-1,lastPh=-1,endShownGid=-1;
 const _v=new THREE.Vector3();
-function clearVisuals(){TV.forEach(t=>{if(t)scene.remove(t.m.g)});TV.length=0;cancelPlace();TBLOCK.length=0;for(const [,e] of EV)scene.remove(e.Z.g);EV.clear();for(const c of CORPSES)scene.remove(c.Z.g);CORPSES.length=0;lastBase=-1;lastWave=-1;lastPh=-1}
+function clearVisuals(){TV.forEach(t=>{if(t)scene.remove(t.m.g)});TV.length=0;cancelPlace();TBLOCK.length=0;for(const [,e] of EV)scene.remove(e.Z.g);EV.clear();for(const c of CORPSES)scene.remove(c.Z.g);CORPSES.length=0;SEEN_T.clear();lastBase=-1;lastWave=-1;lastPh=-1}
 function syncVisuals(V,dt){if(!V)return;const isHost=S.rm&&S.rm.isHost;
  // zombies first so towers can aim at their rendered positions
  const seen=new Set();let boss=null;
  for(const e of V.e){const [id,ti,d,hp,max,fl]=e;const type=ETYPES[ti];seen.add(id);let ev=EV.get(id);
-  if(!ev){ev={Z:buildZombie(type),d,type,pos:{x:0,z:0},hp,fl:0};scene.add(ev.Z.g);EV.set(id,ev)}
-  const od=ev.d;if(isHost)ev.d=d;else{const moving=!(fl&3);if(moving)ev.d+=ENEMIES[type].speed*(fl&8?1.5:1)*dt;if(Math.abs(ev.d-d)>4)ev.d=d;else ev.d+=(d-ev.d)*Math.min(1,dt*4)}
+  if(!ev){ev={Z:buildZombie(type),d,type,pos:{x:0,z:0},hp,fl:0,el:0};scene.add(ev.Z.g);EV.set(id,ev);
+   if(!SEEN_T.has(type)){SEEN_T.add(type);if(ZTIP[type])banner(ZTIP[type],1)}}
+  // Only the per-zombie skin clone is safe to recolour; every other material here is shared and cached.
+  const el=fl&16;if(el!==ev.el){ev.el=el;ev.Z.el=el;ev.Z.body.scale.multiplyScalar(el?1.24:1/1.24);ev.Z.skinMat.emissive.setRGB(el?.5:0,el?.24:0,0)}
+  const od=ev.d;if(isHost)ev.d=d;else{const moving=!(fl&3)&&!(fl&64);const mod=waveMod(V.w,V.wt);
+   if(moving)ev.d+=ENEMIES[type].speed*(fl&8?1.5:1)*(mod==='frenzy'?1.2:1)*(el?1.22:1)*dt;if(Math.abs(ev.d-d)>4)ev.d=d;else ev.d+=(d-ev.d)*Math.min(1,dt*4)}
   const p=pathPos(ev.d);ev.pos={x:p.x,z:p.z};const Z=ev.Z;Z.g.position.set(p.x,0,p.z);Z.g.rotation.y+=angDiff(Z.g.rotation.y,p.a)*Math.min(1,dt*8);
   if(hp<ev.hp)Z.hit=.18;ev.hp=hp;setZombieHp(Z,hp/max);animateZombie(Z,dt,Math.abs(ev.d-od)>1e-4,fl);
   if(type==='screamer'&&fl&1&&!(ev.fl&1))fxRing(p,7,0x9ad06a,1.1);
   if(type==='boss'&&fl&2&&!(ev.fl&2)){fxRing(p,7,0xc8402a,1.4);banner('The Abomination is winding up a slam!',1)}
   if(type==='boss'&&fl&4&&!(ev.fl&4)){fxRing(p,7,0xffa060,.6);fxDust(p,10,3);if(Math.hypot(PL.x-p.x,PL.z-p.z)<14)PL.shake=.35}
+  if(type==='leaper'&&fl&32&&!(ev.fl&32))fxDust(p,4,1.1);
+  if(type==='spitter'&&fl&64&&!(ev.fl&64))fxRing(p,3.4,0xb8e04a,.7)
   ev.fl=fl;if(type==='boss')boss={hp,max}}
  for(const [id,ev] of EV)if(!seen.has(id)){EV.delete(id);if(ev.d>PATH_LEN-2.5){scene.remove(ev.Z.g);fxSparks(new THREE.Vector3(BASE.dx,1.2,BASE.dz),10,0xff7040);continue}ev.Z.bar.visible=false;CORPSES.push({Z:ev.Z,t:0,dir:Math.random()<.5?1:-1});fxDust(ev.pos,4,1.2)}
  for(let i=CORPSES.length-1;i>=0;i--){const c=CORPSES[i];c.t+=dt;const Z=c.Z;const k=Math.min(1,c.t/.45);if(Z.type!=='crawler'){Z.body.rotation.x=-k*k*1.45*c.dir;Z.body.position.y=Math.sin(k*Math.PI)*.15}Z.skinMat.emissive.setRGB(0,0,0);
@@ -1472,8 +1566,11 @@ function syncVisuals(V,dt){if(!V)return;const isHost=S.rm&&S.rm.isHost;
  // base feedback, banners
  if(lastBase>=0&&V.b<lastBase){BASEFX.lamp.material.emissive.setHex(0xff2010);setTimeout(()=>BASEFX.lamp.material.emissive.setHex(0xffcf80),250);fxSparks(new THREE.Vector3(BASE.dx,1.5,BASE.dz),14,0xff7040);fxSmoke(new THREE.Vector3(BASE.dx,1.2,BASE.dz),2,1.2,.5);
   $('#coreBox').classList.remove('hurt');void $('#coreBox').offsetWidth;$('#coreBox').classList.add('hurt');if(Math.hypot(PL.x-BASE.x,PL.z-BASE.z)<12)PL.shake=.25}lastBase=V.b;
- if(V.w!==lastWave&&V.w>0&&V.ph===0)banner('Wave '+V.w+(V.w===V.wt?' · Final wave':''),V.w%5===0||V.w===V.wt?1:0);
- if(lastPh===0&&V.ph===1&&V.wd>0)banner('Wave '+V.wd+' held · +'+(40+10*V.wd)+' scrap');lastWave=V.w;lastPh=V.ph;
+ if(V.w!==lastWave&&V.w>0&&V.ph===0){const md=waveMod(V.w,V.wt);
+  banner('Wave '+V.w+(md?' · '+MODS[md].n:''),md?1:(V.w%5===0||V.w===V.wt?1:0));
+  // The counter is what makes a new type interesting rather than just another health bar.
+  if(md&&MODS[md].d)toast(MODS[md].n+': '+MODS[md].d,4200)}
+ if(lastPh===0&&V.ph===1&&V.wd>0)banner('Wave '+V.wd+' held · +'+(40+10*V.wd+(waveMod(V.wd,V.wt)?20:0))+' scrap');lastWave=V.w;lastPh=V.ph;
  if((V.st==='won'||V.st==='lost')&&endShownGid!==V.gid&&S.view==='game')showEnd(V);
  if(V.st==='play'&&!$('#endScreen').hidden&&endShownGid!==V.gid){$('#endScreen').hidden=true;S.panel=null;clearVisuals();resetPlayer()}}
 function rebuildTBlock(){TBLOCK.length=0;TV.forEach(t=>{if(t)t.m.g.traverse(o=>{if(o.isMesh&&o.geometry.type!=='RingGeometry'&&o.geometry.type!=='CircleGeometry')TBLOCK.push(o)})})}
@@ -1508,7 +1605,8 @@ function hud(V){const t=performance.now();if(t-hudLast<120||!V)return;hudLast=t;
  $('#coreTxt').textContent=V.b+' / '+V.bm;$('#coreBar').style.width=(V.b/V.bm*100)+'%';$('#coreBar').classList.toggle('low',V.b/V.bm<.35);
  $('#goldTxt').textContent=S.admin?999999:V.g;
  $('#waveTxt').textContent=V.w===0?'Get ready':'Wave '+V.w+' / '+V.wt;$('#diffTag').textContent=(DIFF[V.df]||DIFF.normal).name;
- const counting=V.ph===1&&V.st==='play';$('#waveStatus').textContent=V.st!=='play'?'Match over':(counting?(V.w===0?'First wave in ':'Next wave in ')+V.cd+'s':V.rem+' zombies remaining');$('#waveBtn').hidden=!counting;
+ const counting=V.ph===1&&V.st==='play';const md=V.st==='play'?waveMod(counting?V.w+1:V.w,V.wt):null;
+ $('#waveStatus').textContent=V.st!=='play'?'Match over':(counting?((V.w===0?'First wave in ':'Next wave in ')+V.cd+'s'+(md?' · '+MODS[md].n:'')):V.rem+' zombies remaining');$('#waveBtn').hidden=!counting;
  const ab=$('#waveAuto');ab.textContent='Auto skip: '+(V.as?'on':'off');ab.classList.toggle('primary',!!V.as);
  const mem=roomMembers();$('#teamBox').replaceChildren(h('div',{class:'hd',text:'Survivors'}),...mem.map(m=>h('div',null,h('span',{class:'dot',style:'background:'+safeColor(m.presence.c)}),String(m.presence.n),h('span',{class:'muted',text:(V.ws&&V.ws[String(m.peer)]!=null?V.ws[String(m.peer)]:0)+' scrap · '}),(m.me?S.rm&&S.rm.isHost:m.peer===(S.rm&&S.rm.hostPeer))?h('span',{class:'muted',text:'host'}):null)));
  if(S.sel!=null)renderSide(V)}
@@ -1631,7 +1729,7 @@ const TUT=[
  {world:()=>({x:BASE.dx,y:2,z:BASE.dz,l:'Outpost door'}),t:'The outpost',b:'The road ends at the outpost door. Every zombie that reaches it damages the outpost. At zero, the match is lost.'},
  {sel:'#buildBtn',t:'Deploy a defender',b:'Press B (or click Deploy) and pick Infantry, Sniper or Grenadier, or press 1, 2 or 3. Aim at open ground beside the road and click. Green means the spot is OK, red means blocked.',done:()=>{const V=currentView();return !!V&&V.t.some(Boolean)}},
  {sel:'#goldBox',t:'Scrap',b:'Defenders cost scrap from one shared team pool. Kills and cleared waves earn more. Walk up to a defender and press U to upgrade (level 3 adds a second soldier) or X to dismiss for a refund.'},
- {sel:'#waveBox',t:'Waves',b:'Each wave starts when the timer runs out, or press G to start it early. Screamers speed up nearby zombies. Bosses stun nearby defenders.'},
+ {sel:'#waveBox',t:'Waves',b:'Each wave starts when the timer runs out, or press G to start it early. The back half of every match carries a modifier, named above the timer. Screamers speed up nearby zombies, Husks shrug off rifles, Spitters silence a sentry, Bosses stun everything nearby.'},
  {sel:'#btnMenu',t:'Menu and lobby',b:'Press Esc for the menu: settings, replay this tutorial, or return to the lobby.'}];
 const T={active:false,i:0,doneAt:0};
 function _unusedNearestEmptyPad(){const V=currentView();let b=-1,bd=1e9;[].forEach((p,i)=>{if(V&&V.t[i])return;const d=Math.hypot(p.x-PL.x,p.z-PL.z);if(d<bd){bd=d;b=i}});return b}
