@@ -1,6 +1,6 @@
 {
   "name": "savour-vih-zombie-defense",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Savour Vih: Zombie Defense - co-op 3D tower defense with a multiplayer server",
   "main": "server.js",
   "scripts": { "start": "node server.js" },
