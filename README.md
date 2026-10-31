@@ -1,4 +1,4 @@
-# Savour Vih: Zombie Defense
+# Zombie Tower Defense
 
 Co-op 3D zombie tower defense. This folder contains the game and its own multiplayer server, ready for Render.
 
