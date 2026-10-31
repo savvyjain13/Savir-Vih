@@ -668,8 +668,8 @@ const BOXCOL=[],ROOFS=[],ROOFMESH=[],TRAMPS=[],MAPANIM=[],LAUNCH=[];
 let MAPG=null,CURMAP=null,blinkers=[],BASEFX={},SHOP=null,LOCKER=null;const CRATE_SPOTS=[];
 function roofAt(x,z,m){for(const r of ROOFS)if(x>r.x0+m&&x<r.x1-m&&z>r.z0+m&&z<r.z1-m)return r;return null}
 function placeHeight(x,z){const r=roofAt(x,z,0);return r?r.top:0}
-function canPlace(x,z,towers){if(!isFinite(x)||!isFinite(z))return 'Aim at the ground';if(Math.abs(x)>27.5||Math.abs(z)>27.5)return 'Outside the fence';
- const near=()=>{for(const t of towers)if(Math.hypot(x-t.x,z-t.z)<2.6)return 'Too close to another defender';if(towers.length>=MAX_TOWERS)return 'Defender limit reached';return null};
+function canPlace(x,z,towers,skip){if(!isFinite(x)||!isFinite(z))return 'Aim at the ground';if(Math.abs(x)>27.5||Math.abs(z)>27.5)return 'Outside the fence';
+ const near=()=>{for(const t of towers)if(t!==skip&&Math.hypot(x-t.x,z-t.z)<2.6)return 'Too close to another defender';if(towers.length-(skip?1:0)>=MAX_TOWERS)return 'Defender limit reached';return null};
  if(roofAt(x,z,0)){if(!roofAt(x,z,1.2))return 'Too close to the roof edge';return near()}
  for(const b of BOXCOL)if(x>b.x0-1.3&&x<b.x1+1.3&&z>b.z0-1.3&&z<b.z1+1.3)return 'Blocked by a building';
  if(distToPath(x,z)<2.9)return 'Too close to the road';if(Math.hypot(x-BASE.x,z-BASE.z)<5.6)return 'Too close to the outpost';if(Math.hypot(x-GATE.x,z-GATE.z)<6)return 'Too close to the breach';
@@ -683,8 +683,14 @@ const MAPS={
  downtown:{name:'Downtown',desc:'City blocks, rooftops and trampolines. Snipers on a rooftop fire 2× faster.',color:'#35d6e8',
   wp:[[-10,-36],[-10,-14],[14,-14],[14,6],[-14,6],[-14,22],[22,22]],spawn:[10.5,-4,Math.PI*.5],fog:0x24343c,ground:['permacr',{rep:[16,16],color:'#8d979d'}],road:'asphalt',build:buildDowntown},
  farmland:{name:'Farmland',desc:'A long winding farm track past barns and silos. Wide open sightlines.',color:'#5fd0a8',
-  wp:[[36,22],[14,22],[14,-6],[-2,-6],[-2,20],[-18,20],[-18,-22],[4,-22]],spawn:[6,6,Math.PI],fog:0x2e3a36,ground:['ground',{rep:[12,12],color:'#6d7d6a'}],road:'road',build:buildFarmland}};
-const MAP_IDS=['outpost','downtown','farmland'];
+  wp:[[36,22],[14,22],[14,-6],[-2,-6],[-2,20],[-18,20],[-18,-22],[4,-22]],spawn:[6,6,Math.PI],fog:0x2e3a36,ground:['ground',{rep:[12,12],color:'#6d7d6a'}],road:'road',build:buildFarmland},
+ precinct:{name:'Precinct Row',desc:'A police block with rooftops, a watch deck and holding cells.',color:'#4a9ae8',
+  wp:[[-6,-36],[-6,-16],[14,-16],[14,2],[-8,2],[-8,18],[22,18]],spawn:[0,8,Math.PI*.5],fog:0x22303a,ground:['permacr',{rep:[16,16],color:'#8d979d'}],road:'asphalt',build:buildPrecinct},
+ quarry:{name:'The Quarry',desc:'Pale dust, crusher decks and long straight carries. Bring range.',color:'#d8b060',
+  wp:[[-28,34],[-28,6],[-10,6],[-10,-14],[8,-14],[8,10],[24,10],[24,-8]],spawn:[0,-2,Math.PI],fog:0x3a3630,ground:['dust',{rep:[12,12],color:'#a29a88'}],road:'road',build:buildQuarry},
+ factory:{name:'The Factory',desc:'Indoors with a ceiling - the walls have a second floor you can build on.',color:'#ff8a1f',
+  wp:[[6,36],[6,12],[-12,12],[-12,-6],[8,-6],[8,-22],[-10,-22],[-24,-22]],spawn:[2,-2,Math.PI*.75],fog:0x242c34,ground:['tile',{rep:[16,16],color:'#8a9098'}],road:'asphalt',build:buildFactory}};
+const MAP_IDS=['outpost','downtown','farmland','precinct','quarry','factory'];
 const PADC='#f0a830',BOARD=30000;
 // Zones are generic gates (pad0/1/2); the map is a property of the party boarding there, not of the zone.
 const padName=id=>/^pad[0-9]$/.test(String(id||''))?'PAD '+('ABC'[+String(id).slice(3)]||'?'):String(id||'zone');
@@ -696,6 +702,11 @@ TEXDRAW.crate=(x,w,hh)=>{x.fillStyle='#333f47';x.fillRect(0,0,w,hh);for(let i=0;
 TEXDRAW.container=(x,w,hh)=>{x.fillStyle='#3a464e';x.fillRect(0,0,w,hh);for(let i=0;i<w;i+=16){x.fillStyle='rgba(0,0,0,.28)';x.fillRect(i,0,5,hh);x.fillStyle='rgba(210,230,240,.08)';x.fillRect(i+8,0,3,hh)}blot(x,w,hh,30,['#8a5a20','#2b343a'],6,26,.45);streaks(x,w,hh,30,'#0e161a',.45)};
 TEXDRAW.hay=(x,w,hh)=>{x.fillStyle='#8a8878';x.fillRect(0,0,w,hh);x.strokeStyle='rgba(40,48,44,.5)';for(let i=0;i<400;i++){x.beginPath();const sx=R(w),sy=R(hh);x.moveTo(sx,sy);x.lineTo(sx+R(14)-7,sy+R(4)-2);x.stroke()}blot(x,w,hh,20,['#a2a08c','#6a6a5c'],8,30,.4)};
 TEXDRAW.barn=(x,w,hh)=>{x.fillStyle='#4a4a4c';x.fillRect(0,0,w,hh);for(let i=0;i<w;i+=32){x.fillStyle='rgba(0,0,0,.35)';x.fillRect(i,0,3,hh);x.fillStyle=`rgba(190,210,220,${R(.07)})`;x.fillRect(i+3,0,29,hh)}blot(x,w,hh,26,['#6a3a30','#3a464e'],8,30,.5);chips(x,w,hh,60,['#3f4d56','#5c686f']);streaks(x,w,hh,30,'#12181c',.4);scratches(x,w,hh,30,'#cfe0e8',.2)};
+TEXDRAW.dust=(x,w,hh)=>{x.fillStyle='#8a8274';x.fillRect(0,0,w,hh);blot(x,w,hh,50,['#9a9282','#766f62','#8f8878','#a29a88'],16,60,.4);speckle(x,w,hh,2600,'#5f594e',.3);speckle(x,w,hh,900,'#c4bcac',.16);
+ for(let i=0;i<26;i++){x.strokeStyle='rgba(90,84,72,.4)';x.lineWidth=1+R(2);x.beginPath();let cx=R(w),cy=R(hh);x.moveTo(cx,cy);for(let k=0;k<6;k++){cx+=R(30)-15;cy+=R(10)-5;x.lineTo(cx,cy)}x.stroke()}};
+TEXDRAW.tile=(x,w,hh)=>{x.fillStyle='#3c4247';x.fillRect(0,0,w,hh);for(let j=0;j<hh;j+=32)for(let i=0;i<w;i+=32){x.fillStyle=`rgba(${30+R(16)},${36+R(16)},${40+R(16)},1)`;x.fillRect(i+1,j+1,30,30)}
+ blot(x,w,hh,30,['#4a3a22','#2a3036'],8,34,.45);speckle(x,w,hh,900,'#0d1114',.3);x.strokeStyle='rgba(220,230,236,.05)';x.lineWidth=1;for(let i=0;i<=w;i+=32){x.beginPath();x.moveTo(i,0);x.lineTo(i,hh);x.stroke()}for(let j=0;j<=hh;j+=32){x.beginPath();x.moveTo(0,j);x.lineTo(w,j);x.stroke()}};
+TEXDRAW.grate=(x,w,hh)=>{x.fillStyle='#20262b';x.fillRect(0,0,w,hh);for(let i=0;i<w;i+=12){x.fillStyle='#39434a';x.fillRect(i,0,7,hh);x.fillStyle='rgba(0,0,0,.5)';x.fillRect(i+7,0,5,hh)}for(let j=0;j<hh;j+=40){x.fillStyle='#2b3338';x.fillRect(0,j,w,4)}streaks(x,w,hh,26,'#0b0f12',.5);scratches(x,w,hh,24,'#aebcc4',.18)};
 
 /* ---------- map loading ---------- */
 function clearMap(){if(MAPG){scene.remove(MAPG);MAPG.traverse(o=>{if(o.geometry&&!Object.values(GC).includes(o.geometry))o.geometry.dispose()})}
@@ -818,6 +829,89 @@ function buildFarmland(sc,rng){
  for(let k=0;k<30;k++){const a=rng()*Math.PI*2,r=36+rng()*16;greenTree(sc,Math.cos(a)*r,Math.sin(a)*r,1.2+rng())}COL.splice(0,COL.length,...COL.filter(c=>Math.abs(c.x)<32&&Math.abs(c.z)<32));
  for(let k=0;k<4;k++){const a=rng()*Math.PI*2,r=48+rng()*10;barn(sc,Math.cos(a)*r,Math.sin(a)*r,rng()<.5?0:Math.PI/2)}BOXCOL.splice(0,BOXCOL.length,...BOXCOL.filter(b=>Math.abs(b.x0)<40))}
 
+/* ---------- new maps: Precinct Row, The Quarry, The Factory ---------- */
+// A deck is a walkable second floor. It registers both as a roof (so posts snap onto it and get the high ground)
+// and as a box top (so the survivor can stand there), which is exactly how a rooftop building works downtown.
+function deck(sc,x,z,w,d,top,label){const g=new THREE.Group();g.position.set(0,0,0);sc.add(g);
+ const floor=part(g,box(w,.22,d),M('steel',{color:'#4a525a'}),x,top,z);ROOFMESH.push(floor);ROOFS.push({x0:x-w/2,x1:x+w/2,z0:z-d/2,z1:z+d/2,top:top+.11});
+ addBoxCol(x-w/2,x+w/2,z-d/2,z+d/2,top+.11);CAMBLOCK.push(floor);
+ for(const [ox,oz,ww,dd] of [[0,-d/2+.1,w,.2],[0,d/2-.1,w,.2],[-w/2+.1,0,.2,d],[w/2-.1,0,.2,d]])part(g,box(ww,.9,dd),M('concrete',{color:'#5c686f'}),x+ox,top+.55,z+oz,0,0,0,true);
+ for(const sx of [-1,1])for(const sz of [-1,1])part(g,cyl(.13,.15,top,8),col('#26333a',{metalness:.85,roughness:.4}),x+sx*(w/2-.6),top/2,z+sz*(d/2-.6));
+ for(let i=1;i<Math.ceil(w/9);i++)part(g,cyl(.12,.14,top,8),col('#26333a',{metalness:.85,roughness:.4}),x-w/2+i*9,top/2,z);
+ for(let i=1;i<Math.ceil(d/9);i++)part(g,cyl(.12,.14,top,8),col('#26333a',{metalness:.85,roughness:.4}),x,top/2,z-d/2+i*9);
+ part(g,box(w,.05,.05),glow('#f0a830',1.3),x,top+.13,z+d/2,0,0,0,false);part(g,box(w,.05,.05),glow('#f0a830',1.3),x,top+.13,z-d/2,0,0,0,false);
+ if(label){const s=signBoard(label,'POSTS UP HERE GET THE HIGH GROUND',Math.min(6,w*.8),.9,'#f0a830');s.position.set(x,top+1.6,z+d/2-.1);g.add(s)}
+ for(let k=0;k<Math.floor(w*d/6);k++)part(g,bagGeo(),M('sandbag'),x+w/2-1-R(w-2),top+.5,z+d/2-1-R(d-2),0,R(3),0,false)}
+function crusher(sc,x,z){const g=new THREE.Group();g.position.set(x,0,z);sc.add(g);part(g,box(4.4,3.2,3.4),M('corrugated',{color:'#5a5f56'}),0,1.6,0);CAMBLOCK.push(g.children[0]);addBoxCol(x-2.2,x+2.2,z-1.7,z+1.7,99);
+ part(g,cyl(.5,.7,2.6,12),M('rust'),1.2,4.2,-.6);part(g,box(3,.5,2.4),M('steel',{color:'#31383e'}),0,3.4,0);
+ const jaw=part(g,box(2.6,.7,.7),M('rustDeep'),0,2.9,.9,0,0,0);const glowp=part(g,box(.7,.5,.06),glow('#ff7a2a',1.4),-1.4,1.8,1.72,0,0,0,false);
+ const l=new THREE.PointLight(0xff8a3a,.7,8,2);l.position.set(-1.4,1.8,2.2);g.add(l);
+ MAPANIM.push(dt=>{jaw.rotation.z=Math.sin(performance.now()/700)*.12;l.intensity=.5+Math.abs(Math.sin(performance.now()/700))*.5});addCirc(x,z,2.6)}
+function vat(sc,x,z,c){const g=new THREE.Group();g.position.set(x,0,z);sc.add(g);const r=1.15;
+ part(g,cyl(r,r*.94,2.6,14),M('steel',{color:'#4e565e'}),0,1.3,0);CAMBLOCK.push(g.children[0]);addCirc(x,z,r+.2);addBoxCol(x-r,x+r,z-r,z+r,99);
+ const lid=part(g,cyl(r*.9,r*.9,.14,14),M('rust'),0,2.66,0);const orb=part(g,sph(r*.5,12,8),glow(c||'#6ae8f8',1.6),0,2.9,0,0,0,0,false);
+ for(let k=0;k<3;k++)part(g,cyl(.05,.05,.5,6),col('#26333a',{metalness:.8}),Math.cos(k*2.1)*r,1.4+k*.3,Math.sin(k*2.1)*r,0,0,Math.PI/2);
+ MAPANIM.push(()=>{orb.scale.setScalar(.86+Math.abs(Math.sin(performance.now()/900+x))*.24)});return orb}
+function gearWheel(sc,x,z,y,r){const g=new THREE.Group();g.position.set(x,y,z);sc.add(g);
+ part(g,G('gearg',()=>new THREE.CylinderGeometry(r,r*.9,0.36,18)),M('rust',{color:'#5a5246'}),0,0,0,Math.PI/2,0,0);
+ for(let i=0;i<12;i++){const a=i/12*Math.PI*2;part(g,box(r*.3,r*.22,.34),M('steel',{color:'#4a4640'}),Math.cos(a)*r,Math.sin(a)*r,0,0,0,a-Math.PI/2,false)}
+ MAPANIM.push(dt=>{g.rotation.z+=dt*.5});return g}
+function buildPrecinct(sc,rng){
+ building(sc,-20,-8,10,10,6,true,'#a09a90');building(sc,4,-9,9,7,5.2,true,'#8a9098');
+ deck(sc,4,-24,12,4.2,4.8,'WATCH DECK');
+ for(const [x,z,w,d,hh] of [[-26,20,7,6,9],[26,-14,7,7,11],[20,-24,8,6,8],[-24,-26,7,7,10]])building(sc,x,z,w,d,hh,false);
+ const place=makePlacer(rng);
+ for(let i=0;i<5;i++)place(2.2,(x,z,t)=>car(sc,x,z,t*6,i%2?'#2a3a56':'#8d979d',i%3===0));
+ for(let i=0;i<4;i++)place(1.4,(x,z,t)=>barricade(sc,x,z,t*3));for(let i=0;i<4;i++)place(.9,(x,z,t)=>drums(sc,x,z,t));
+ for(let i=0;i<3;i++)place(1.2,(x,z,t)=>dumpster(sc,x,z,t*6));
+ for(const [x,z] of [[-14,-2],[-4,-2],[8,8],[-16,16]])warnLight(sc,x,z);
+ {const box2=part(sc,box(3.4,2.2,2.2),M('steel',{color:'#3f4a54'}),-17,1.1,10);CAMBLOCK.push(box2);addBoxCol(-18.7,-15.3,8.9,11.1,99);
+  for(let k=0;k<4;k++)part(sc,box(.08,1.4,.08),col('#8ab4d8',{metalness:.8}),-17+R(2.6)-1.3,1.1,11.15,0,0,0,false);
+  const sgn=signBoard('PRECINCT 9','HOLDING CELLS',3.2,1,'#4a9ae8');sgn.position.set(-17,2.9,11.2);sc.add(sgn)}
+ // Kettling yard: the precinct entrance is ringed with caltrops, so anything that walks in through it is slowed.
+ {const cx=-26,cz=14;for(let i=0;i<3;i++)part(sc,box(.5,.4,.5),M('hazard'),cx+i*1.6,.2,cz,0,R(1),0);
+  const sgn=signBoard('KETTLE ZONE','KILL ZONE',3.4,1,'#f0a830');sgn.position.set(cx+1.6,2.4,cz-1.4);sc.add(sgn);addCirc(cx+1.6,cz,1.2)}
+ for(let d=9;d<PATH_LEN-6;d+=14){const p=pathPos(d);const nx=Math.cos(p.a),nz=-Math.sin(p.a);const x=p.x+nx*2.9,z=p.z+nz*2.9;if(distToPath(x,z)>2.4&&Math.hypot(x-GATE.x,z-GATE.z)>4)streetLight(sc,x,z,Math.atan2(-nx,-nz))}
+ for(let k=0;k<8;k++){const a=rng()*Math.PI*2,r=40+rng()*10;neonStrip(sc,Math.cos(a)*r,Math.sin(a)*r,3+rng()*3,rng()*3,rng()<.5?'#4a9ae8':'#f0a830',.05)}
+ for(let k=0;k<4;k++){const a=rng()*Math.PI*2,r=44+rng()*8;ruin(sc,Math.cos(a)*r,Math.sin(a)*r,rng())}}
+function buildQuarry(sc,rng){
+ const place=makePlacer(rng);
+ crusher(sc,-19,-10);crusher(sc,16,0);
+ deck(sc,-20.5,-19,11,4.4,5.2,'CRUSHER DECK');deck(sc,15,20,13,4.4,5.6,'SCALE DECK');
+ trampoline(sc,-13,-19);trampoline(sc,6.5,20);
+ for(const [x,z] of [[-24,14],[-4,-4],[4,-22],[22,18]])silo(sc,x,z);
+ for(let i=0;i<7;i++)place(1.6,(x,z,t)=>scrapPile(sc,x,z,t));for(let i=0;i<4;i++)place(.9,(x,z,t)=>drums(sc,x,z,t));
+ for(let i=0;i<4;i++)place(1.4,(x,z,t)=>barricade(sc,x,z,t*3));for(let i=0;i<3;i++)place(2.2,(x,z,t)=>car(sc,x,z,t*6,'#6a6258',rng()<.4));
+ for(let i=0;i<3;i++){const x=-20+i*14,z=-24+R(4);const b=part(sc,box(9,.5,3.2),M('corrugated',{color:'#4a525a'}),x,1.6,z,0,R(.3),0);CAMBLOCK.push(b);addBoxCol(x-4.5,x+4.5,z-1.6,z+1.6,99);addCirc(x,z,4.6);
+  const belt=part(sc,box(8.6,.14,2.4),col('#1b2024',{roughness:.9}),x,1.92,z,0,0,0,false);MAPANIM.push(()=>{belt.position.y=1.92+Math.sin(performance.now()/500+x)*.02})}
+ for(let d=10;d<PATH_LEN-6;d+=16){const p=pathPos(d);const nx=Math.cos(p.a),nz=-Math.sin(p.a);for(const sd of [1,-1]){if(rng()<.5)continue;const x=p.x+nx*3.4*sd,z=p.z+nz*3.4*sd;if(distToPath(x,z)>2.6&&Math.abs(x)<28&&Math.abs(z)<28&&!BOXCOL.some(b=>x>b.x0-1&&x<b.x1+1&&z>b.z0-1&&z<b.z1+1))warnLight(sc,x,z)}}
+ for(let k=0;k<26;k++){const a=rng()*Math.PI*2,r=34+rng()*14;deadTree(sc,Math.cos(a)*r,Math.sin(a)*r,.7+rng()*.5,true)}
+ // Dust hangs over the crushers all match long - it is the one thing you notice first about this place.
+ {const puff=new THREE.Group();sc.add(puff);const puffs=[];for(let i=0;i<7;i++){const s=part(sc,sph(.9+i*.22,8,6),col('#a29a88',{transparent:true,opacity:.1,roughness:1}),-16+R(12),4+R(3),-14+R(14),0,0,0,false);s.castShadow=false;puffs.push(s)}
+  MAPANIM.push(dt=>{for(let i=0;i<puffs.length;i++){const p=puffs[i];p.position.y+=dt*(.14+i*.02);p.scale.setScalar(.9+i*.2+Math.sin(performance.now()/900+i)*.1);if(p.position.y>9){p.position.y=3.2;p.material.opacity=.09}else p.material.opacity=Math.max(.02,.12-(p.position.y-3)*.014)}})}}
+function buildFactory(sc,rng){
+ const place=makePlacer(rng);
+ // The shell: four walls and a ceiling, so this is a room rather than an open field, with the second floor on the walls.
+ // The road side is left open at x=6 so the convoy can drive in; the lintel over the gap is not a collider.
+ for(const [x,z,w,d] of [[0,-29.2,59,.9],[-29.2,0,.9,59],[29.2,0,.9,59],[-13.75,29.2,31.5,.9],[19.75,29.2,19.5,.9]]){const b=part(sc,box(w,9.6,d),M('corrugated',{color:'#3a4248',rep:[6,1]}),x,4.8,z);CAMBLOCK.push(b);addBoxCol(x-w/2,x+w/2,z-d/2,z+d/2,99)}
+ part(sc,box(8,1.5,.9),M('corrugated',{color:'#3a4248',rep:[2,1]}),6,8.85,29.2,0,0,0,false);
+ for(const s of [-1,1])part(sc,box(.35,9.6,.5),M('corrugated',{color:'#4e565e'}),6+s*4.2,4.8,29.2,0,0,0,false);
+ const ceil=part(sc,box(59.6,.3,59.6),M('steel',{color:'#242b31'}),0,9.7,0,0,0,0,false);ceil.castShadow=false;
+ for(let i=-24;i<=24;i+=8){part(sc,box(.5,.14,54),glow('#cfe4ea',.55),i,9.42,0,0,0,0,false);const l=new THREE.PointLight(0xbfe6f0,.5,14,2);l.position.set(i,8.6,0);sc.add(l)}
+ deck(sc,0,-26.5,22,3.6,5.2,'CATWALK NORTH');deck(sc,-26,0,4.4,26,5.4,'CATWALK WEST');
+ trampoline(sc,13,-26.5);trampoline(sc,-26,-15.5);
+ for(const [x,z] of [[10,24],[-16,-16],[18,4]])vat(sc,x,z,['#6ae8f8','#9ad06a','#ff8a1f'][Math.floor(R(3))]);
+ for(const [x,z,r] of [[-20,-4,1.6],[14,-16,1.4],[-6,20,1.8]])gearWheel(sc,x,z,2.2,r);
+ for(const [x,z,w,d] of [[-4,-16,5,3.4],[14,18,4.4,3.2],[-22,20,3.6,5.2]]){const b=part(sc,box(w,2.6,d),M('steel',{color:'#4e565e'}),x,1.3,z);CAMBLOCK.push(b);addBoxCol(x-w/2,x+w/2,z-d/2,z+d/2,99);addCirc(x,z,Math.max(w,d)/2+.6);
+  part(sc,box(w*.7,.2,d*.5),M('rust'),x,2.75,z,0,0,0,false);part(sc,box(.3,.24,.06),glow('#ff7a2a',1.6),x-w/2+.4,1.9,z+d/2+.02,0,0,0,false)}
+ for(let i=0;i<6;i++)place(1,(x,z,t)=>drums(sc,x,z,t));for(let i=0;i<4;i++)place(1.2,(x,z,t)=>scrapPile(sc,x,z,t));
+ for(let i=0;i<3;i++)place(1.4,(x,z,t)=>barricade(sc,x,z,t*3));
+ for(let i=0;i<5;i++)place(.6,(x,z,t)=>tires(sc,x,z,t));
+ // Steam keeps leaking off the presses, so the room never quite looks still.
+ {for(let i=0;i<5;i++){const x=-14+i*7,z=-10+((i%2)*20);const s=part(sc,sph(.4,8,6),col('#cfe4ea',{transparent:true,opacity:.12,roughness:1}),x,1,z,0,0,0,false);s.castShadow=false;
+  MAPANIM.push((dt)=>{s.position.y+=dt*.7;s.scale.setScalar(1+s.position.y*.16);s.material.opacity=Math.max(0,.16-s.position.y*.016);if(s.position.y>7){s.position.y=1;s.scale.setScalar(1)}})}}
+ for(let k=0;k<4;k++){const a=rng()*Math.PI*2,r=42+rng()*10;neonStrip(sc,Math.cos(a)*r,Math.sin(a)*r,3,rng()*3,'#ff8a1f',.05)}}
+
 /* ---------- camp lobby: shop + deploy zone ---------- */
 /* ---------- dystopian city props ---------- */
 const rng0=()=>Math.random();
@@ -900,7 +994,9 @@ function buildCamp(sc,rng){scene.fog.color.setHex(0x1b2c34);PSPAWN.x=0;PSPAWN.z=
   const keeper=makeSurvivor('#35d6e8','Quartermaster',false,{hat:'cap',jacket:'tan',scarf:'amber'});keeper.g.position.set(0,0,-.2);g.add(keeper.g);MAPANIM.push(dt=>animateSurvivor(keeper,dt,0,false,0));
   for(let i=0;i<5;i++)part(sc,box(.9,.9,.9),M('crate'),-21+i*.95,.45,-3.5+(i%2)*.5,0,R(1),0);
   g.updateMatrixWorld(true);
-  CRATES.forEach((C,i)=>{const lx=(i-1)*2.4,lz=3.6;const ped=new THREE.Group();ped.position.set(lx,0,lz);g.add(ped);
+  CRATES.forEach((C,i)=>{const lx=(i-(CRATES.length-1)/2)*1.9,lz=3.6;
+   // A seasonal crate is not on the counter once its weekend is over - no pedestal, no interact point, nothing to buy.
+   if(!liveCrate(C))return;const ped=new THREE.Group();ped.position.set(lx,0,lz);g.add(ped);
    part(ped,cyl(.62,.7,.5,8),col('#10181d',{metalness:.7,roughness:.4}),0,.25,0);part(ped,G('pedr',()=>new THREE.TorusGeometry(.64,.04,6,24)),glow(C.glowc,.9),0,.5,0,Math.PI/2,0,0,false);
    const cm=crateModel(C);cm.g.position.y=.5;ped.add(cm.g);
    const tag=new THREE.Sprite(new THREE.SpriteMaterial({map:canvasTex(512,150,(x)=>{x.fillStyle='rgba(6,14,18,.9)';x.fillRect(0,0,512,150);x.fillStyle=C.glowc;x.fillRect(0,0,512,8);x.textAlign='center';x.fillStyle='#dfeef3';x.font='700 44px "Orbitron", Impact, sans-serif';fitFont(x,C.n.toUpperCase(),470);x.fillText(C.n.toUpperCase(),256,64);x.fillStyle='#f0a830';x.font='700 40px "Chakra Petch", sans-serif';x.fillText(C.cost+' COINS',256,120)}),depthWrite:false}));
@@ -938,7 +1034,7 @@ function buildCamp(sc,rng){scene.fog.color.setHex(0x1b2c34);PSPAWN.x=0;PSPAWN.z=
 function setPadLabel(P,text,color){if(P.lt===text)return;P.lt=text;if(P.label.material.map)P.label.material.map.dispose();P.label.material.map=canvasTex(256,64,(x)=>{if(!text)return;x.fillStyle='rgba(6,14,18,.86)';x.fillRect(0,4,256,56);x.fillStyle=color||'#35d6e8';x.fillRect(0,4,256,4);x.fillStyle='#dce8ee';x.font='700 30px "Chakra Petch",sans-serif';x.textAlign='center';x.textBaseline='middle';x.fillText(text,128,33)});P.label.material.needsUpdate=true}
 
 function crateModel(C,big){const g=new THREE.Group();const s=big?1.15:.9;const body=new THREE.Group();g.add(body);
- const mat=C.id==='supply'?M('crate'):C.id==='military'?M('olive'):col('#1c1c20',{metalness:.6,roughness:.35});const trim=C.id==='elite'?glow('#e0b050',.8):C.id==='military'?M('steel'):M('rustDeep');
+ const mat=C.id==='supply'?M('crate'):C.id==='military'?M('olive'):C.id==='spooky'?col('#c85a12',{roughness:.7,metalness:.15}):col('#1c1c20',{metalness:.6,roughness:.35});const trim=C.id==='elite'?glow('#e0b050',.8):C.id==='military'?M('steel'):C.id==='spooky'?col('#3a1a4e',{roughness:.8}):M('rustDeep');
  part(body,box(.9*s,.6*s,.65*s),mat,0,.3*s,0);for(const y of [.06,.54])part(body,box(.94*s,.06*s,.69*s),trim,0,y*s,0);for(const x of [-.43,.43])part(body,box(.06*s,.6*s,.69*s),trim,x*s,.3*s,0);
  if(C.id==='military'){part(body,box(.3*s,.16*s,.01),col('#d8d0b0'),0,.3*s,.33*s,0,0,0,false)}if(C.id==='elite'){part(body,box(.2*s,.2*s,.02),glow('#e0b050',1.4),0,.3*s,.335*s,0,0,Math.PI/4,false)}
  const lid=new THREE.Group();lid.position.y=.6*s;g.add(lid);part(lid,box(.94*s,.1*s,.69*s),mat,0,.05*s,0);part(lid,box(.96*s,.03*s,.71*s),trim,0,.1*s,0);
@@ -1031,10 +1127,14 @@ const TOWERS={
  medic:{name:'Field Medic',cost:310,dmg:0,range:7,cd:1,color:'#ff6a5a',desc:'Aura: posts nearby deal 15% more damage',aura:{dmg:.15,r:7},rar:1,cap:4},
  spotter:{name:'Spotter',cost:430,dmg:0,range:9,cd:1,color:'#f0d060',desc:'Aura: posts nearby reach 20% farther',aura:{rng:.2,r:9},rar:2,cap:5},
  warmonger:{name:'Warmonger',cost:720,dmg:36,range:9.5,cd:.5,color:'#ff9a6a',desc:'Aura: posts nearby fire 25% faster',aura:{rate:.25,r:8},prefer:'hp',rar:3,cap:7},
- bank:{name:'Piggy Bank',alt:'Bank',altAt:3,cost:380,dmg:0,range:6,cd:1,color:'#e0b84a',desc:'Pays out scrap at the end of every wave',inc:45,rar:1,cap:5}};
-TOWERS.sniper.roof=true;TOWERS.hsniper.roof=true;TOWERS.skys.roof=true;TOWERS.rail.roof=true;
+ bank:{name:'Piggy Bank',alt:'Bank',altAt:3,cost:380,dmg:0,range:6,cd:1,color:'#e0b84a',desc:'Pays out scrap at the end of every wave',inc:45,rar:1,cap:5},
+ rover:{name:'SWAT Rover',cost:560,dmg:78,range:10.5,cd:.7,color:'#4a86d8',desc:'Armored police van - the one post you can pick up and park again',prefer:'hp',mov:true,rar:2,cap:5},
+ // Three event posts. xo marks them as crate-exclusive, so no other crate can hand them out and they vanish from the pools with the crate.
+ pumpkin:{name:'Pumpkin Trooper',cost:470,dmg:34,range:9,cd:.3,color:'#ff8a1f',desc:'Halloween only: rapid jack-o\'lantern bursts',rar:2,cap:5,xo:'halloween'},
+ scarecrow:{name:'Scarecrow',cost:820,dmg:215,range:17,cd:1.5,color:'#b06ad8',desc:'Halloween only: long stalk shot that chills what it hits',prefer:'hp',ch:1,chT:5200,rar:3,cap:6,xo:'halloween'}};
+TOWERS.sniper.roof=true;TOWERS.hsniper.roof=true;TOWERS.skys.roof=true;TOWERS.rail.roof=true;TOWERS.scarecrow.roof=true;
 // Append-only: the TKEYS index is the wire format for a hosted tower, so reordering desyncs an old host mid-match.
-const TKEYS=['infantry','sniper','grenadier','mg','flamer','rocket','tesla','hsniper','scatter','skys','mortar','arc','rail','demolisher','frost','cryo','venom','medic','spotter','warmonger','bank'];
+const TKEYS=['infantry','sniper','grenadier','mg','flamer','rocket','tesla','hsniper','scatter','skys','mortar','arc','rail','demolisher','frost','cryo','venom','medic','spotter','warmonger','bank','rover','pumpkin','scarecrow'];
 // Weapons that lob rather than fly flat, so aim pitch and shell fx follow the same rule everywhere.
 const LOB=t=>t==='grenadier'||t==='mortar'||t==='demolisher';
 // A post is called Bank once it has grown out of the Piggy Bank, so every panel asks instead of reading .name.
@@ -1074,7 +1174,11 @@ function manGear(Z,type){if(type==='flamer'){for(const s of [-1,1])part(Z.torso,
  if(type==='medic'){part(Z.torso,box(.3,.26,.16),col('#d8d0c0',{roughness:.8}),0,.3,-.24);part(Z.torso,box(.2,.06,.02),col('#e04a3a'),0,.36,-.33);part(Z.torso,box(.06,.2,.02),col('#e04a3a'),0,.36,-.33);for(const A of [Z.armR.up,Z.armL.up])part(A,box(.17,.05,.17),col('#e04a3a'),0,.2,0)}
  if(type==='spotter'){part(Z.head,box(.06,.16,.06),col('#2c2a26'),-.19,.16,0);part(Z.head,cyl(.06,.06,.03,10),M('steel'),-.19,.24,0,Math.PI/2);part(Z.head,box(.3,.09,.06),col('#241f18'),0,.16,.16);for(const s of [-1,1])part(Z.head,cyl(.055,.055,.03,10),glow('#f0d060',1.2),s*.09,.16,.17,Math.PI/2,0,0,false);part(Z.torso,box(.28,.22,.14),M('cloth',{color:'#6a6248'}),0,.3,-.24)}
  if(type==='warmonger'){for(let k=0;k<7;k++)part(Z.torso,cyl(.032,.032,.1,6),col('#a08040',{metalness:.8}),-.24+k*.08,.42,.14,Math.PI/2,0,.35,false);part(Z.torso,box(.05,.5,.05),M('cloth',{color:'#5a3a2a'}),.22,.28,-.2,0,0,-.2);part(Z.torso,sph(.05,7,5),glow('#ff9a6a',1.8),.22,.56,-.2,0,0,0,false);part(Z.head,box(.32,.06,.08),M('rust'),0,.2,.14)}
- if(type==='bank'){part(Z.torso,box(.36,.44,.06),M('cloth',{color:'#6a5a3a'}),0,.28,.15);part(Z.torso,cyl(.09,.09,.14,10),col('#4a3a24',{roughness:.8}),.2,.2,-.22,0,0,0);part(Z.torso,sph(.05,7,5),col('#e0b84a',{metalness:.9,roughness:.25}),.2,.32,-.22,0,0,0,false);part(Z.head,box(.3,.08,.32),M('cloth',{color:'#5a4a2e'}),0,.3,-.01)}}
+ if(type==='bank'){part(Z.torso,box(.36,.44,.06),M('cloth',{color:'#6a5a3a'}),0,.28,.15);part(Z.torso,cyl(.09,.09,.14,10),col('#4a3a24',{roughness:.8}),.2,.2,-.22,0,0,0);part(Z.torso,sph(.05,7,5),col('#e0b84a',{metalness:.9,roughness:.25}),.2,.32,-.22,0,0,0,false);part(Z.head,box(.3,.08,.32),M('cloth',{color:'#5a4a2e'}),0,.3,-.01)}
+ // SWAT Rover gets the riot kit, and the two event posts wear their holiday colours so a crate drop is readable at a glance.
+ if(type==='rover'){part(Z.torso,box(.42,.4,.22),col('#20304a',{metalness:.5,roughness:.5}),0,.32,0);part(Z.torso,box(.44,.1,.24),col('#101820',{metalness:.6}),0,.5,0);for(const s of [-1,1])part(Z.torso,box(.1,.3,.06),col('#2a3a56'),s*.22,.3,-.12);part(Z.head,box(.34,.26,.36),col('#1a2434',{metalness:.6,roughness:.4}),0,.3,0);part(Z.head,box(.3,.09,.02),glow('#7ad0e8',1.1),0,.3,.19,0,0,0,false)}
+ if(type==='pumpkin'){part(Z.torso,box(.34,.3,.14),col('#7a3a12',{roughness:.9}),0,.32,-.2);for(let k=0;k<4;k++)part(Z.torso,sph(.05,7,5),col('#ff8a1f',{emissive:0xff6a10,emissiveIntensity:.5,roughness:.6}),-.16+k*.11,.5,-.2);part(Z.head,box(.3,.06,.3),col('#3a2a12'),0,.16,0)}
+ if(type==='scarecrow'){part(Z.torso,box(.4,.44,.2),M('cloth',{color:'#6a5a3a'}),0,.3,0);part(Z.torso,box(.5,.06,.24),M('cloth',{color:'#4a3a24'}),0,.52,0);for(const A of [Z.armR.up,Z.armL.up])part(A,box(.14,.34,.14),M('cloth',{color:'#5a4a2e'}),0,.16,0);part(Z.head,box(.34,.3,.3),M('cloth',{color:'#8a7a4a'}),0,.3,0);part(Z.head,box(.38,.07,.38),M('cloth',{color:'#4a3a24'}),0,.48,0);part(Z.head,sph(.045,7,5),glow('#b06ad8',1.8),.08,.3,.16,0,0,0,false);part(Z.head,sph(.045,7,5),glow('#b06ad8',1.8),-.08,.3,.16,0,0,0,false)}}
 function gun(kind){const g=new THREE.Group();const dark=col('#1e1d1b',{metalness:.6,roughness:.45}),mid=col('#3a3a34',{metalness:.5,roughness:.5}),wood=M('wood');let mz;
  if(kind==='infantry'){part(g,box(.07,.11,.5),dark,0,0,.12);part(g,cyl(.022,.022,.32,8),dark,0,.02,.52,Math.PI/2);part(g,box(.05,.16,.07),mid,0,-.12,.18,.25);part(g,box(.06,.1,.24),wood,0,-.02,-.22);part(g,box(.04,.04,.12),dark,0,.08,.1);mz=.7}
  if(kind==='sniper'){part(g,box(.07,.09,.7),wood,0,0,.05);part(g,cyl(.02,.024,.8,8),dark,0,.02,.78,Math.PI/2);part(g,cyl(.04,.045,.32,10),dark,0,.11,.15,Math.PI/2);part(g,cyl(.045,.045,.02,10),glow('#6a8aa0',.4),0,.11,.32,Math.PI/2,0,0,false);for(const s of [-1,1])part(g,cyl(.012,.012,.3,6),dark,s*.06,-.12,.6,0,0,s*.4);mz=1.2}
@@ -1098,10 +1202,14 @@ function gun(kind){const g=new THREE.Group();const dark=col('#1e1d1b',{metalness
  if(kind==='warmonger'){part(g,box(.1,.14,.56),M('rust',{color:'#6a4a3a'}),0,0,.06);part(g,cyl(.032,.036,.62,10),dark,0,.02,.66,Math.PI/2);part(g,cyl(.055,.055,.26,10),mid,0,.02,.5,Math.PI/2);part(g,box(.13,.16,.14),M('steel'),-.14,-.02,.02);part(g,box(.06,.18,.2),col('#3a2a22'),0,-.13,-.16);for(let k=0;k<4;k++)part(g,box(.025,.05,.03),col('#a08040',{metalness:.8}),.09,.06+k*.01,.3,0,0,0,false);part(g,sph(.035,6,5),glow('#ff9a6a',1.8),.09,.13,.56,0,0,0,false);mz=.86}
  // A bank post carries a coin ledger, not a weapon, so it needs its own prop or the rig gets an empty hand.
  if(kind==='bank'){part(g,box(.2,.03,.26),M('wood'),0,0,.06);part(g,box(.19,.16,.03),col('#d8d0c0',{roughness:.8}),0,.09,.14,-.5);for(let k=0;k<3;k++)part(g,cyl(.035,.035,.012,10),col('#e0b84a',{metalness:.8,roughness:.3}),-.05+k*.05,.02,.02,Math.PI/2,0,0,false);mz=.3}
- const m=new THREE.Object3D();m.position.set(0,.02,mz);g.add(m);g.traverse(o=>{if(o.isMesh)o.castShadow=true});return{g,m}}
+ if(kind==='rover'){part(g,box(.08,.1,.42),col('#1a2434',{metalness:.6}),0,0,.04);part(g,cyl(.024,.028,.46,8),dark,0,.02,.44,Math.PI/2);part(g,box(.07,.09,.12),col('#2a3a56'),0,.08,.1);part(g,box(.05,.12,.07),mid,0,-.11,.06);mz=.66}
+ if(kind==='pumpkin'){part(g,box(.11,.13,.34),col('#7a3a12',{roughness:.9}),0,0,0);part(g,cyl(.075,.055,.34,10),dark,0,.02,.32,Math.PI/2);part(g,sph(.075,9,7),col('#ff8a1f',{emissive:0xff6a10,emissiveIntensity:.9,roughness:.6}),0,.02,.52,0,0,0,false);part(g,box(.06,.14,.16),M('wood'),0,-.11,-.14);mz=.56}
+ if(kind==='scarecrow'){part(g,box(.07,.08,.86),M('wood'),0,0,.08);part(g,cyl(.018,.022,.94,8),dark,0,.02,.9,Math.PI/2);part(g,cyl(.04,.045,.3,10),col('#4a3a24',{roughness:.9}),0,.1,.18,Math.PI/2);part(g,cyl(.045,.045,.02,10),glow('#b06ad8',1.6),0,.1,.36,Math.PI/2,0,0,false);for(const s of [-1,1])part(g,cyl(.012,.012,.32,6),dark,s*.06,-.11,.66,0,0,s*.4);mz=1.34}
+ // Nothing in the hand is worse than an empty hand: the rig position falls back so an unlisted post still stands.
+ const m=new THREE.Object3D();m.position.set(0,.02,mz||.6);g.add(m);g.traverse(o=>{if(o.isMesh)o.castShadow=true});return{g,m}}
 function buildTowerMesh(type,lvl){const g=new THREE.Group();const yaw=new THREE.Group(),pitch=new THREE.Group();const T={g,yaw,pitch,recoil:[],muzzles:[],type,lvl,kick:0,men:[]};
  part(g,box(2.5,.14,2.5),M('concrete'),0,-.07,0,0,0,0,false);for(const [a,b] of [[-1,-1],[1,-1],[-1,1],[1,1]])part(g,box(.45,.02,.45),M('hazard'),a*1.02,.005,b*1.02,0,0,0,false);
- const kneel=!['infantry','flamer','tesla','mortar','demolisher','medic','spotter','bank'].includes(type);g.add(yaw);
+ const kneel=!['infantry','flamer','tesla','mortar','demolisher','medic','spotter','bank','rover','pumpkin','scarecrow'].includes(type);g.add(yaw);
  if(type==='infantry'||type==='mg'||type==='scatter'){for(let i=0;i<9;i++){const a=-Math.PI*.15+i/8*Math.PI*1.3;for(let r=0;r<2;r++)part(yaw,bagGeo(),M('sandbag'),Math.cos(a+Math.PI/2)*1.05,.13+r*.26,Math.sin(a+Math.PI/2)*1.05,0,-a+r*.15,0)}}
  if(type==='sniper'||type==='hsniper'||type==='skys'){const w=M('wood');for(const [a,b] of [[-.7,-.7],[.7,-.7],[-.7,.7],[.7,.7]])part(g,box(.12,1.4,.12),w,a,.7,b);for(const s of [-1,1])part(g,box(1.5,.08,.06),w,0,.45,s*.7,0,0,s*.5);
   part(g,box(1.7,.12,1.7),w,0,1.43,0);for(let i=0;i<5;i++)part(g,box(.5,.05,.05),w,0,.25+i*.27,-.95);for(const s of [-1,1])part(g,box(.05,1.4,.05),w,s*.25,.7,-.95);yaw.position.y=1.49;
@@ -1143,6 +1251,35 @@ function buildTowerMesh(type,lvl){const g=new THREE.Group();const yaw=new THREE.
   part(g,G('vaultring',()=>new THREE.TorusGeometry(.2,.03,6,18)),col('#e0b84a',{metalness:.85,roughness:.3}),-.72,.5,.83,0,0,0,false);
   part(g,box(.4,.3,.3),M('crate'),.66,.15,.62);for(let i=0;i<4;i++)part(g,cyl(.07,.07,.03,12),col('#e0b84a',{metalness:.9,roughness:.25}),.6+R(.14),.32+i*.035,.56+R(.12),Math.PI/2,0,R(3),false);
   part(g,sph(.11,10,7),glow('#e0b84a',1.1),.68,.5,.56,0,0,0,false);for(let i=0;i<3;i++)part(g,bagGeo(),M('sandbag'),-.4+i*.5,.13,-.8,0,0,0)}
+ // The Rover is a real vehicle: a tall van with a separate cab, roller shutters, a push bar and an alternating light bar.
+ if(type==='rover'){const body=M('steel',{color:'#33506f',metalness:.5,roughness:.5}),dark=M('steel',{color:'#1f3145',metalness:.55,roughness:.45});
+  part(g,box(1.26,1.42,2.2),body,-.98,1.22,.32);part(g,box(1.3,.1,2.26),dark,-.98,1.98,.32);
+  part(g,box(1.2,.86,.9),body,-.98,.94,-1.05);part(g,box(1.24,.08,.94),dark,-.98,1.4,-1.05);
+  part(g,box(1.04,.44,.05),col('#0e161e',{metalness:.3,roughness:.2}),-.98,1.1,-1.48);
+  for(const s of [-1,1])part(g,box(.05,.4,.56),col('#0e161e',{roughness:.2}),-.98+s*.62,1.08,-1.05);
+  for(const s of [-1,1])part(g,box(.04,.62,1.24),M('corrugated',{color:'#7a848c',metalness:.7,roughness:.35}),-.98+s*.64,1.28,.42);
+  for(const s of [-1,1])part(g,box(.02,.22,1.9),col('#dfe6ea',{roughness:.6}),-.98+s*.645,.86,.3);
+  part(g,box(1.16,1.1,.06),body,-.98,1.1,1.44);
+  part(g,box(1.32,.3,.16),col('#141c24',{metalness:.7}),-.98,.5,-1.52);for(let i=0;i<3;i++)part(g,box(1.06,.055,.05),col('#8a949c',{metalness:.8}),-.98,.62+i*.13,-1.58);
+  for(const s of [-1,1])for(const z of [-1.05,.95])part(g,G('vwheel',()=>new THREE.CylinderGeometry(.34,.34,.2,12)),col('#101418',{roughness:.9}),-.98+s*.64,.34,z,0,0,Math.PI/2);
+  part(g,box(.68,.13,.24),col('#2a3038',{metalness:.6}),-.98,2.07,.32);const bl1=part(g,box(.26,.11,.2),glow('#4a9ae8',2.4),-1.18,2.08,.32,0,0,0,false),bl2=part(g,box(.26,.11,.2),glow('#e8483a',2.4),-.78,2.08,.32,0,0,0,false);
+  MAPANIM.push(()=>{const on=(performance.now()/360|0)%2===0;bl1.visible=on;bl2.visible=!on});
+  part(g,box(.42,.3,.3),M('crate'),.72,.15,.66);for(let i=0;i<3;i++)part(g,bagGeo(),M('sandbag'),-.5+i*.5,.13,1.0,0,0,0)}
+ // Event posts get a readable silhouette: a patch of carved pumpkins, and an effigy on a cross.
+ if(type==='pumpkin'){part(g,box(.8,.5,.62),M('wood'),-.82,.25,.52,0,.2,0);
+  for(const [x,z,s] of [[-.74,.02,.3],[-.34,.72,.23],[-1.08,.66,.19]]){const p=part(g,sph(s,10,7),col('#b0200a',{roughness:.85}),x,s*.85,z);p.scale.set(1.06,.84,1);
+   part(g,cyl(.03,.05,.14,6),col('#3f5a2a',{roughness:.9}),x,s*1.62,z);
+   for(const e of [-1,1])part(g,box(.055,.055,.03),glow('#ffd86a',2.2),x+e*s*.36,s*1.02,z+s*.86,0,0,0,false);
+   part(g,box(.13,.045,.03),glow('#ffd86a',2.2),x,s*.78,z+s*.88,0,0,0,false)}
+  for(let i=0;i<3;i++)part(g,bagGeo(),M('sandbag'),-.5+i*.5,.13,-.8,0,0,0)}
+ if(type==='scarecrow'){const w=M('wood');part(g,box(.13,2.4,.13),w,-.85,1.2,-.52);part(g,box(1.6,.12,.12),w,-.85,1.78,-.52);
+  for(const s of [-1,1])for(let i=0;i<4;i++)part(g,G('straw',()=>new THREE.CylinderGeometry(.016,.024,.42,5)),col('#c8a860',{roughness:.95}),-.85+s*(.48+i*.07),1.7-i*.06,-.52,0,0,s*1.15);
+  part(g,box(.36,.38,.32),M('cloth',{color:'#b79a6a',roughness:.95}),-.85,2.12,-.52);
+  for(const s of [-1,1])part(g,box(.075,.06,.03),glow('#b06ad8',2.4),-.85+s*.09,2.16,-.36,0,0,0,false);
+  part(g,box(.26,.05,.03),col('#2a1f18'),-.85,1.99,-.36);
+  for(let i=0;i<5;i++)part(g,cyl(.015,.022,.3,4),col('#c8a860',{roughness:.95}),-.85+(i-2)*.075,2.36,-.52,0,0,0);
+  part(g,box(.52,.07,.38),M('cloth',{color:'#6a4a2a',roughness:.9}),-.85,1.56,-.44,0,0,.1);
+  for(let i=0;i<3;i++)part(g,bagGeo(),M('sandbag'),-.5+i*.5,.13,.72,0,0,0)}
  // Support posts only matter inside their reach, so the aura is drawn as a ring at exactly the radius the sim checks.
  if(TOWERS[type].aura){const A=TOWERS[type].aura;const rg=part(g,G('aurag',()=>{const q=new THREE.RingGeometry(.955,1,56);q.rotateX(-Math.PI/2);return q}),
   new THREE.MeshBasicMaterial({color:TOWERS[type].color,transparent:true,opacity:.3,depthWrite:false,side:THREE.DoubleSide}),0,.02,0,0,0,0,false);rg.scale.set(A.r,1,A.r)}
@@ -1261,6 +1398,8 @@ function makeSurvivor(accent,name,showLabel,eq){eq=eq||DEF_EQ;const jc=(GEAR.jac
  if(hat==='hood'){const b=part(H_,G('hoodg',()=>new THREE.SphereGeometry(.22,10,7,0,Math.PI*2,0,Math.PI*.62)),M('cloth',{color:'#4a4a40'}),0,.24,-.03,-.35);b.scale.set(1.1,1.05,1.1)}
  if(hat==='cowboy'){part(H_,cyl(.32,.32,.03,16),M('cloth',{color:'#6a4a2a'}),0,.31,0);part(H_,cyl(.14,.17,.18,12),M('cloth',{color:'#6a4a2a'}),0,.4,0)}
  if(hat==='crown'){part(H_,cyl(.17,.17,.08,10),M('rust',{color:'#d8a83a'}),0,.35,0);for(let i=0;i<6;i++){const a=i/6*Math.PI*2;part(H_,G('spk',()=>new THREE.ConeGeometry(.04,.14,5)),M('rust',{color:'#d8a83a'}),Math.cos(a)*.15,.45,Math.sin(a)*.15)}}
+ if(hat==='witch'){part(H_,cyl(.3,.3,.03,16),col('#2a1a34',{roughness:.9}),0,.32,0);part(H_,G('witchc',()=>new THREE.ConeGeometry(.17,.5,14)),col('#301c3c',{roughness:.9}),0,.56,0,0,0,.12);part(H_,box(.2,.05,.2),glow('#b06ad8',1.2),0,.36,.16,0,0,0,false)}
+ if(hat==='lantern'){const p=part(H_,sph(.24,12,9),col('#e8781a',{roughness:.85}),0,.28,0);p.scale.set(1.05,.9,1);part(H_,cyl(.05,.05,.12,6),col('#3a4a24',{roughness:1}),0,.5,0);for(const s of [-1,1])part(H_,box(.07,.05,.02),glow('#ffd060',2.4),s*.09,.32,.22,0,0,.5,false);part(H_,box(.12,.05,.02),glow('#ffd060',2.4),0,.19,.22,0,0,0,false)}
  if(hat==='gasmask'){part(H_,box(.22,.16,.1),col('#2a2a28',{roughness:.6}),0,.15,.15);for(const s of [-1,1])part(H_,cyl(.05,.05,.08,8),col('#3a3a36',{metalness:.5}),s*.1,.1,.2,Math.PI/2.5,0,0);for(const s of [-1,1])part(H_,cyl(.035,.035,.02,10),glow('#a8c0a0',.4),s*.06,.21,.2,Math.PI/2,0,0,false)}
  else for(const sx of [-1,1])part(H_,box(.04,.03,.02),col('#1a1512'),sx*.065,.22,.15,0,0,0,false);
  part(Z.armR.fo,box(.13,.08,.13),M('cloth',{color:accent}),0,-.05,0);
@@ -1309,11 +1448,15 @@ function updateFx(dt){for(const q of LPOOL){if(q.t>0){q.t-=dt;q.l.intensity=q.t>
 
 /* ============ gear, crates and shop ============ */
 const GEAR={
- hat:{beanie:{n:'Beanie',r:0},cap:{n:'Field Cap',r:0},helmet:{n:'Combat Helmet',r:1},beret:{n:'Beret',r:1},hood:{n:'Scav Hood',r:1},cowboy:{n:'Ranger Hat',r:2},gasmask:{n:'Gas Mask',r:3},crown:{n:'Scrap Crown',r:3}},
- jacket:{olive:{n:'Olive Jacket',r:0,c:'#5a5e44'},tan:{n:'Desert Tan Jacket',r:0,c:'#8a7a5a'},urban:{n:'Urban Gray Jacket',r:1,c:'#5a5e64'},crimson:{n:'Crimson Jacket',r:1,c:'#6a2a2a'},night:{n:'Night Ops Jacket',r:2,c:'#26262a'},arctic:{n:'Arctic Jacket',r:2,c:'#c8ccd0'},gold:{n:'Gilded Jacket',r:3,c:'#b8902a'}},
- scarf:{amber:{n:'Amber Scarf',r:0,c:'#d99a3a'},red:{n:'Red Scarf',r:0,c:'#c8402a'},blue:{n:'Blue Scarf',r:1,c:'#3a6aa8'},white:{n:'White Scarf',r:1,c:'#e0e0d8'},toxic:{n:'Toxic Green Scarf',r:2,c:'#7ad04a'},violet:{n:'Royal Violet Scarf',r:3,c:'#8a4ac8'}}};
+ hat:{beanie:{n:'Beanie',r:0},cap:{n:'Field Cap',r:0},helmet:{n:'Combat Helmet',r:1},beret:{n:'Beret',r:1},hood:{n:'Scav Hood',r:1},cowboy:{n:'Ranger Hat',r:2},witch:{n:'Witch Hat',r:2,xo:'halloween'},gasmask:{n:'Gas Mask',r:3},lantern:{n:'Jack-o-Lantern',r:3,xo:'halloween'},crown:{n:'Scrap Crown',r:3}},
+ jacket:{olive:{n:'Olive Jacket',r:0,c:'#5a5e44'},tan:{n:'Desert Tan Jacket',r:0,c:'#8a7a5a'},urban:{n:'Urban Gray Jacket',r:1,c:'#5a5e64'},crimson:{n:'Crimson Jacket',r:1,c:'#6a2a2a'},night:{n:'Night Ops Jacket',r:2,c:'#26262a'},arctic:{n:'Arctic Jacket',r:2,c:'#c8ccd0'},flannel:{n:'Lumberjack Flannel',r:2,c:'#7a2f2a',xo:'halloween'},gold:{n:'Gilded Jacket',r:3,c:'#b8902a'}},
+ scarf:{amber:{n:'Amber Scarf',r:0,c:'#d99a3a'},red:{n:'Red Scarf',r:0,c:'#c8402a'},blue:{n:'Blue Scarf',r:1,c:'#3a6aa8'},white:{n:'White Scarf',r:1,c:'#e0e0d8'},toxic:{n:'Toxic Green Scarf',r:2,c:'#7ad04a'},ember:{n:'Ember Scarf',r:2,c:'#ff7a1f',xo:'halloween'},violet:{n:'Royal Violet Scarf',r:3,c:'#8a4ac8'}}};
 const RAR=[{n:'Common',c:'#b8b0a0'},{n:'Rare',c:'#4a9ae8'},{n:'Epic',c:'#b86ae0'},{n:'Legendary',c:'#f0b030'}];
-const CRATES=[{id:'supply',n:'Supply Crate',cost:100,odds:[0,80,18,2],tint:'#8a7a5a',glowc:'#b8b0a0'},{id:'military',n:'Military Crate',cost:250,odds:[0,45,45,10],tint:'#5a6a44',glowc:'#4a9ae8'},{id:'elite',n:'Elite Crate',cost:600,odds:[0,0,60,40],tint:'#3a3a40',glowc:'#f0b030'}];
+const CRATES=[{id:'supply',n:'Supply Crate',cost:100,odds:[0,80,18,2],tint:'#8a7a5a',glowc:'#b8b0a0'},{id:'military',n:'Military Crate',cost:250,odds:[0,45,45,10],tint:'#5a6a44',glowc:'#4a9ae8'},{id:'elite',n:'Elite Crate',cost:600,odds:[0,0,60,40],tint:'#3a3a40',glowc:'#f0b030'},
+ // One seasonal crate: it is the only place its posts and its gear turn up, and it is packed away on 3 November.
+ {id:'spooky',n:'Halloween Crate',cost:400,odds:[0,0,60,40],tint:'#3a1a3e',glowc:'#ff7a1f',xo:'halloween'}];
+const HALLOW=Date.UTC(2026,10,3);
+const liveCrate=C=>!C.xo||now()<HALLOW;
 const BASE_SENTRIES=['infantry','sniper','grenadier'],MAX_COPIES=6;
 function ownedTypes(){return TKEYS.filter(k=>BASE_SENTRIES.includes(k)||(Prof.sentries&&Prof.sentries[k]>0))}
 // Fourteen defenders do not fit on nine number keys, so the build list is filterable and the digits follow the filter.
@@ -1339,9 +1482,13 @@ function ensureInv(){Prof.inv=Array.isArray(Prof.inv)?Prof.inv:[];for(const f of
 function eqStr(e){e=e||Prof.eq||DEF_EQ;return [e.hat,e.jacket,e.scarf].join(',')}
 function parseEq(s){const [hat,jacket,scarf]=String(s||'').split(',');return{hat:GEAR.hat[hat]?hat:'beanie',jacket:GEAR.jacket[jacket]?jacket:'olive',scarf:GEAR.scarf[scarf]?scarf:'amber'}}
 function rollCrate(C){let r=Math.random()*100,tier=1;for(let i=0;i<4;i++){if(r<C.odds[i]){tier=i;break}r-=C.odds[i]}
- const pool=TKEYS.filter(k=>TOWERS[k].rar===tier);return pool[Math.floor(Math.random()*pool.length)]||'mg'}
+ // Exclusive posts only leave the crate they belong to, and an event crate only hands back its own exclusives.
+ const inC=k=>(TOWERS[k].xo||'')=== (C.xo||'');const pool=TKEYS.filter(k=>TOWERS[k].rar===tier&&inC(k));return pool[Math.floor(Math.random()*pool.length)]||'mg'}
+function rollGear(C){const ids=[];for(const cat in GEAR)for(const k in GEAR[cat])if((GEAR[cat][k].xo||'')===(C.xo||''))ids.push(cat+':'+k);
+ let r=Math.random()*100,tier=1;for(let i=0;i<4;i++){if(r<C.odds[i]){tier=i;break}r-=C.odds[i]}
+ const pick=ids.filter(id=>gearOf(id).r===tier);const one=(pick.length?pick:ids)[Math.floor(Math.random()*(pick.length?pick.length:ids.length))];return one||'hat:beanie'}
 let OPEN=null;
-function buyCrate3D(spot){if(OPEN){toast('Wait for the crate to finish opening.');return}const C=spot.C;if((Prof.coins||0)<C.cost){toast('Not enough coins: need '+(C.cost-(Prof.coins||0))+' more. Finish matches to earn coins.');return}
+function buyCrate3D(spot){if(OPEN){toast('Wait for the crate to finish opening.');return}const C=spot.C;if(!liveCrate(C)){toast('The '+C.n+' is packed away.');return}if((Prof.coins||0)<C.cost){toast('Not enough coins: need '+(C.cost-(Prof.coins||0))+' more. Finish matches to earn coins.');return}
  Prof.coins-=C.cost;const type=rollCrate(C);const T=TOWERS[type];const had=(Prof.sentries[type]||0);let res,refund=0;
  if(!had){Prof.sentries[type]=1;res='new'}else if(had<MAX_COPIES){Prof.sentries[type]=had+1;res='star'}else{refund=Math.round(C.cost*.4);Prof.coins+=refund;res='max'}saveProf();PL.act=.6;
  const g={r:T.rar,n:T.name,type};const rc=new THREE.Color(RAR[g.r].c);const cm=crateModel(C,true);cm.g.position.set(spot.x,6,spot.z);cm.g.rotation.y=Math.atan2(PL.x-spot.x,PL.z-spot.z);scene.add(cm.g);spot.model.g.visible=false;spot.tag.visible=false;
@@ -1360,20 +1507,21 @@ function updateOpen(dt){const o=OPEN;if(!o)return;o.t+=dt;const t=o.t,sp=o.spot,
   o.light.intensity=Math.max(1.2,o.light.intensity-dt*8);if(o.g.r>=2&&Math.random()<.3)fxSparks(new THREE.Vector3(sp.x+(Math.random()-.5),1.5+Math.random(),sp.z+(Math.random()-.5)),1,new THREE.Color(RAR[o.g.r].c).getHex())}
  const far=Math.hypot(PL.x-sp.x,PL.z-sp.z)>5;if(o.popped&&(t>14||(far&&t>3)))closeOpen()}
 function closeOpen(){const o=OPEN;if(!o)return;for(const x of [o.cm.g,o.man.g,o.beam,o.lab,o.light])scene.remove(x);o.spot.model.g.visible=true;o.spot.tag.visible=true;OPEN=null}
-function buyCrate(id){const C=CRATES.find(c=>c.id===id);if(!C)return;if((Prof.scrap||0)<C.cost){toast('Not enough scrap. Earn more by surviving waves.');return}
- Prof.scrap-=C.cost;const item=rollCrate(C);const dup=Prof.inv.includes(item);let refund=0;if(dup){refund=Math.round(C.cost*.4);Prof.scrap+=refund}else Prof.inv.push(item);saveProf();showCrateOpen(C,gearOf(item),dup,refund)}
+function buyCrate(id){const C=CRATES.find(c=>c.id===id);if(!C)return;if(!liveCrate(C)){toast('The '+C.n+' is packed away.');return}if((Prof.scrap||0)<C.cost){toast('Not enough scrap. Earn more by surviving waves.');return}
+ Prof.scrap-=C.cost;const item=rollGear(C);const dup=Prof.inv.includes(item);let refund=0;if(dup){refund=Math.round(C.cost*.4);Prof.scrap+=refund}else Prof.inv.push(item);saveProf();showCrateOpen(C,gearOf(item),dup,refund)}
 function equip(id){const g=gearOf(id);if(!g||!Prof.inv.includes(id))return;Prof.eq[g.cat]=g.key;saveProf();rebuildMyAvatar();pushPresence(true);renderShop()}
 let shopTab='crates';
 function openShop(){if(S.view!=='camp')return;shopTab='locker';$('#shop').hidden=false;S.panel='shop';if(document.pointerLockElement)document.exitPointerLock();renderShop();updateLockHint()}
 function closeShop(){$('#shop').hidden=true;$('#crateOpen').hidden=true;S.panel=null;updateLockHint()}
 function renderShop(){const body=$('#shopBody');$('#shopScrap').textContent=Prof.coins||0;$$('#shop .tab').forEach(t=>t.classList.toggle('on',t.dataset.tab===shopTab));
- if(shopTab==='crates'){body.replaceChildren(...CRATES.map(C=>h('div',{class:'crate'},h('div',{class:'crateArt',style:'--t:'+C.tint},h('i')),h('div',{class:'crateInfo'},h('b',{text:C.n}),h('div',{class:'odds'},C.odds.map((o,i)=>o?h('span',{style:'color:'+RAR[i].c,text:RAR[i].n+' '+o+'%'}):null))),
-   h('button',{class:'btn primary',disabled:(Prof.scrap||0)<C.cost,onclick:()=>buyCrate(C.id)},h('span',{class:'scrapic'}),' '+C.cost))),h('div',{class:'muted',text:'Crates contain survivor gear. Duplicates are refunded 40% of the crate price. Earn scrap by surviving waves.'}));return}
+ if(shopTab==='crates'){body.replaceChildren(...CRATES.filter(C=>liveCrate(C)).map(C=>h('div',{class:'crate'},h('div',{class:'crateArt',style:'--t:'+C.tint},h('i')),h('div',{class:'crateInfo'},h('b',{text:C.n}),h('div',{class:'odds'},C.odds.map((o,i)=>o?h('span',{style:'color:'+RAR[i].c,text:RAR[i].n+' '+o+'%'}):null))),
+   h('button',{class:'btn primary',disabled:(Prof.scrap||0)<C.cost,onclick:()=>buyCrate(C.id)},h('span',{class:'scrapic'}),' '+C.cost))),h('div',{class:'muted',text:'Crates contain survivor gear. Duplicates are refunded 40% of the crate price. Earn scrap by surviving waves.'}),
+   h('div',{class:'muted',text:'The Halloween Crate carries the Scarecrow, the Pumpkin Trooper, the Witch Hat, the Jack-o-Lantern, the Lumberjack Flannel and the Ember Scarf. It leaves the shop on 3 November - what you already own stays yours.'}));return}
  const cats=[['hat','Headgear'],['jacket','Jackets'],['scarf','Scarves']];
  const sent=h('div',null,h('div',{class:'sect',text:'Sentries'}),h('div',{class:'gearGrid'},TKEYS.map(k=>{const T=TOWERS[k],own=ownedTypes().includes(k),base=BASE_SENTRIES.includes(k),sr=own?starsOf(k):0,rc=base?'#8a8478':RAR[T.rar].c;const st=tStat(k,1);
-  return h('div',{class:'gear'+(own?'':' locked'),style:'--rc:'+rc},h('span',{class:'gn',text:tName(k,1)+(sr?' '+'★'.repeat(sr):'')}),h('span',{class:'gr',text:base?'Starter':own?RAR[T.rar].n+(sr<5?' · '+(MAX_COPIES-1-sr)+' more for max':' · MAX'):'Locked · '+RAR[T.rar].n+' crate drop'}),h('span',{class:'muted',style:'font-size:11px',text:T.desc+' · '+(T.dmg?Math.round(st.dmg*(1+.1*sr))+' dmg':T.inc?'+'+tInc(k,1,0,sr)+' scrap per wave':'Support post')+' · '+T.cost+' scrap'}))})));
+  return h('div',{class:'gear'+(own?'':' locked'),style:'--rc:'+rc},h('span',{class:'gn',text:tName(k,1)+(sr?' '+'★'.repeat(sr):'')}),h('span',{class:'gr',text:base?'Starter':own?RAR[T.rar].n+(sr<5?' · '+(MAX_COPIES-1-sr)+' more for max':' · MAX'):T.xo?'Halloween Crate only':'Locked · '+RAR[T.rar].n+' crate drop'}),h('span',{class:'muted',style:'font-size:11px',text:T.desc+' · '+(T.dmg?Math.round(st.dmg*(1+.1*sr))+' dmg':T.inc?'+'+tInc(k,1,0,sr)+' scrap per wave':'Support post')+' · '+T.cost+' scrap'}))})));
  body.replaceChildren(sent,...cats.map(([c,label])=>h('div',null,h('div',{class:'sect',text:label}),h('div',{class:'gearGrid'},Object.keys(GEAR[c]).map(k=>{const id=c+':'+k,g=gearOf(id),own=Prof.inv.includes(id),on=Prof.eq[c]===k;
-  return h('button',{class:'gear'+(on?' on':'')+(own?'':' locked'),disabled:!own||on,style:'--rc:'+RAR[g.r].c,onclick:()=>equip(id)},g.c?h('span',{class:'sw',style:'background:'+g.c}):h('span',{class:'sw hat',text:'⛑'}),h('span',{class:'gn',text:g.n}),h('span',{class:'gr',text:own?(on?'Equipped':RAR[g.r].n):'Locked'}))})))))}
+  return h('button',{class:'gear'+(on?' on':'')+(own?'':' locked'),disabled:!own||on,style:'--rc:'+RAR[g.r].c,onclick:()=>equip(id)},g.c?h('span',{class:'sw',style:'background:'+g.c}):h('span',{class:'sw hat',text:'⛑'}),h('span',{class:'gn',text:g.n}),h('span',{class:'gr',text:own?(on?'Equipped':RAR[g.r].n):g.xo?'Halloween Crate only':'Locked'}))})))))}
 function showCrateOpen(C,g,dup,refund){const o=$('#crateOpen');o.hidden=false;o.className='stage';$('#coArt').style.setProperty('--t',C.tint);$('#coName').textContent='';$('#coRar').textContent='';$('#coNote').textContent='Opening '+C.n+'…';
  setTimeout(()=>{o.className='stage open';o.style.setProperty('--rc',RAR[g.r].c);$('#coRar').textContent=RAR[g.r].n;$('#coName').textContent=g.n;$('#coNote').textContent=dup?'Duplicate: +'+refund+' scrap refunded':'New gear added to your locker';if(!dup)$('#coEquip').hidden=false;$('#coEquip').onclick=()=>{equip(g.id);o.hidden=true};renderShop()},1300);$('#coEquip').hidden=true}
 $('#shopClose').onclick=closeShop;$('#coClose').onclick=()=>$('#crateOpen').hidden=true;$$('#shop .tab').forEach(t=>t.onclick=()=>{shopTab=t.dataset.tab;renderShop()});
@@ -1664,7 +1812,11 @@ function hostAction(peer,d){const say=m=>{if(peer===S.myPeer)toast(m)};const adm
   wp.g-=T.cost;const pr=peer===S.myPeer?Prof.name:String((peerById(peer)||{presence:{}}).presence.n||'Survivor');let slot=H.towers.indexOf(null);if(slot<0)slot=H.towers.length;H.towers[slot]={type:d.type,lvl:1,cdLeft:0,tg:0,sh:0,spent:T.cost,by:pr,bp:peer,stun:0,x:+x.toFixed(2),z:+z.toFixed(2),y:placeHeight(x,z),st:clamp(Math.round(+d.st||0),0,5)};pushPresence(true);return}
  const t=H.towers[i];if(!t)return;
  if(d.a==='up'){const c=upCost(t.type,t.lvl);if(c==null){say('Already at max level.');return}const wp=walletSlot(peer,nameOf(peerById(peer)));if(wp.g<c){say('Not enough scrap in your own wallet.');return}wp.g-=c;t.spent+=c;t.lvl++;pushPresence(true)}
- if(d.a==='sell'){walletSlot(peer,nameOf(peerById(peer))).g+=Math.floor(t.spent*.7);H.towers[i]=null;pushPresence(true)}}
+ if(d.a==='sell'){walletSlot(peer,nameOf(peerById(peer))).g+=Math.floor(t.spent*.7);H.towers[i]=null;pushPresence(true)}
+ // Only the Rover drives, only its owner parks it, and the new spot must pass the same placement rules as a fresh build.
+ if(d.a==='move'){const T=TOWERS[t.type];if(!T.mov)return;if(t.bp!==peer&&!adm){say('Only the survivor who deployed this post can move it.');return}
+  const x=+d.x,z=+d.z;if(!isFinite(x)||!isFinite(z))return;const why=canPlace(x,z,H.towers.filter(Boolean),t);if(why){say(why+'.');return}
+  t.x=+x.toFixed(2);t.z=+z.toFixed(2);t.y=placeHeight(x,z);say('Rover re-deployed.');pushPresence(true)}}
 function snapshot(){const tn=now();return{st:H.st,map:H.map,gid:H.gid,df:H.df,wt:H.wt,w:H.wave,ph:H.phase==='count'?1:0,cd:Math.max(0,Math.ceil((H.cdEnd-tn)/1000)),as:H.as?1:0,ws:H.wallet?Object.fromEntries(Object.keys(H.wallet).map(k=>[k,Math.floor(H.wallet[k].g)])):{},b:H.base,bm:H.maxBase,k:H.kills,wd:H.wd,rem:H.q.length+H.en.length,
  t:H.towers.map(t=>t?[TKEYS.indexOf(t.type),t.lvl,t.tg,t.sh,t.by,t.stun&&tn<t.stun?1:0,t.x,t.z,t.y||0,t.st||0]:0),e:H.en.map(e=>[e.id,ETYPES.indexOf(e.type),+e.d.toFixed(2),Math.max(0,Math.round(e.hp)),e.max,e.fl])}}
 function currentView(){let v;if(S.rm&&S.rm.isHost)v=H?snapshot():null;else{const hp=peerById(S.rm&&S.rm.hostPeer);const gs=hp&&hp.presence&&hp.presence.gs;if(gs)V_last=gs;v=V_last}if(v)v.g=myBalance(v);return v}
@@ -1788,7 +1940,10 @@ Object.assign(ICON,{frost:'<svg viewBox="0 0 40 40"><circle cx="11" cy="9" r="4.
  medic:'<svg viewBox="0 0 40 40"><circle cx="11" cy="9" r="4.5"/><rect x="6" y="14" width="10" height="12" rx="2"/><rect x="7" y="26" width="3.4" height="11"/><rect x="13" y="26" width="3.4" height="11"/><rect x="16" y="17" width="9" height="7" rx="2"/><path d="M29 4h4v6h6v4h-6v6h-4v-6h-6v-4h6z"/></svg>',
  spotter:'<svg viewBox="0 0 40 40"><circle cx="12" cy="19" r="4.5"/><path d="M8 24h9l2 10H7z"/><rect x="9" y="34" width="3.2" height="5"/><rect x="14" y="34" width="3.2" height="5"/><rect x="7" y="11" width="12" height="4" rx="2"/><circle cx="7" cy="13" r="3.2"/><circle cx="19" cy="13" r="3.2"/><circle cx="31" cy="10" r="6" fill="none" stroke="#35d6e8" stroke-width="2"/><rect x="30" y="1" width="2" height="4"/><rect x="30" y="15" width="2" height="4"/><rect x="22" y="9" width="4" height="2"/><rect x="36" y="9" width="4" height="2"/></svg>',
  warmonger:'<svg viewBox="0 0 40 40"><circle cx="9" cy="11" r="4.5"/><rect x="4" y="16" width="10" height="12" rx="2"/><rect x="5" y="28" width="3.4" height="10"/><rect x="11" y="28" width="3.4" height="10"/><rect x="13" y="17" width="17" height="3"/><rect x="13" y="21" width="10" height="3"/><rect x="22" y="13" width="2.6" height="9" transform="rotate(-20 23 17)"/><rect x="31" y="2" width="2.4" height="26"/><path d="M33.4 3H39v9h-5.6z"/></svg>',
- bank:'<svg viewBox="0 0 40 40"><rect x="2" y="10" width="24" height="22" rx="2"/><circle cx="14" cy="21" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M14 13v16M6 21h16" stroke="currentColor" stroke-width="1.6"/><rect x="22" y="3" width="14" height="3.4" rx="1.5"/><circle cx="29" cy="12" r="3.6" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="34" cy="19" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><rect x="5" y="32" width="3.4" height="6"/><rect x="14" y="32" width="3.4" height="6"/></svg>'});
+ bank:'<svg viewBox="0 0 40 40"><rect x="2" y="10" width="24" height="22" rx="2"/><circle cx="14" cy="21" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M14 13v16M6 21h16" stroke="currentColor" stroke-width="1.6"/><rect x="22" y="3" width="14" height="3.4" rx="1.5"/><circle cx="29" cy="12" r="3.6" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="34" cy="19" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><rect x="5" y="32" width="3.4" height="6"/><rect x="14" y="32" width="3.4" height="6"/></svg>',
+ rover:'<svg viewBox="0 0 40 40"><path d="M2 14h22l6 6v6H2z"/><rect x="5" y="5" width="14" height="3.4" rx="1.5"/><rect x="6" y="16" width="7" height="5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="15" y="16" width="7" height="5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="9" cy="28" r="3.6" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="25" cy="28" r="3.6" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M30 20h8" stroke="currentColor" stroke-width="2"/></svg>',
+ pumpkin:'<svg viewBox="0 0 40 40"><path d="M18 8h4v4h-4z"/><path d="M20 11c-8 0-12 5-12 12s5 14 12 14 12-7 12-14-4-12-12-12z"/><path d="M13 19l5 4-5 3zM27 19l-5 4 5 3z" fill="#0b1114"/><path d="M16 29h8l-4 4z" fill="#0b1114"/></svg>',
+ scarecrow:'<svg viewBox="0 0 40 40"><circle cx="20" cy="10" r="5"/><path d="M18 4l-2 3 4 1z"/><path d="M6 16h28v3.4H6z"/><path d="M18.3 19h3.4v18h-3.4z"/><path d="M12 22l4 2-4 2zM28 22l-4 2 4 2z"/></svg>'});
 function fireFx(type,from,to,tgE){
  if(type==='infantry'){fxMuzzle(from,.35);fxBullet(from,to)}
  else if(type==='mg'){fxMuzzle(from,.42);fxBullet(from,to)}
@@ -1832,7 +1987,7 @@ function nearestPad(){const V=currentView();let best=-1,bd=2.5;if(!V)return -1;V
 function updateInteract(V){PL.near=PLACE?-1:nearestPad();const pr=$('#prompt');
  if(typeof S.sel==='number'&&(PL.near!==S.sel))closeSide();
  if(!V||V.st!=='play'||S.panel){pr.hidden=true;return}
- if(PLACE){pr.hidden=false;pr.classList.toggle('bad',!!PLACE.why);pr.replaceChildren(h('b',{text:'Deploying '+TOWERS[PLACE.type].name+' · '+TOWERS[PLACE.type].cost+' scrap'+(PLACE.roof&&TOWERS[PLACE.type].roof&&!PLACE.why?' · ROOFTOP 2× FIRE RATE':'')}),h('span',null,PLACE.why?PLACE.why+'   ':'Click or press ',PLACE.why?null:h('kbd',{text:'E'}),PLACE.why?null:' to deploy   ',h('kbd',{text:'Esc'}),' cancel'));return}
+ if(PLACE){pr.hidden=false;pr.classList.toggle('bad',!!PLACE.why);const mv=PLACE.slot!=null;pr.replaceChildren(h('b',{text:(mv?'Redeploying ':'Deploying ')+TOWERS[PLACE.type].name+(mv?'':TOWERS[PLACE.type].cost+' scrap')+(PLACE.roof&&TOWERS[PLACE.type].roof&&!PLACE.why?' · ROOFTOP 2× FIRE RATE':'')}),h('span',null,PLACE.why?PLACE.why+'   ':'Click or press ',PLACE.why?null:h('kbd',{text:'E'}),PLACE.why?null:' to deploy   ',h('kbd',{text:'Esc'}),' cancel'));return}
  pr.classList.remove('bad');if(PL.near<0){pr.hidden=true;return}
  const t=V.t[PL.near];pr.hidden=false;
  pr.replaceChildren(h('b',{text:tName(TKEYS[t[0]],t[1])+' · Level '+t[1]+(t[5]?' · STUNNED':'')}),h('span',null,h('kbd',{text:'E'}),' details   ',h('kbd',{text:'U'}),' upgrade   ',h('kbd',{text:'X'}),' dismiss'))}
@@ -1864,7 +2019,9 @@ function renderSide(V){if(!V||S.sel==null)return;const i=S.sel,t=i==='build'?nul
    // A post that fires nothing has no shot to quote, so the panel describes what it hands the squad instead.
    :T.aura?[h('div',null,h('b',{text:auraBits(T,auraScale(lvl)).join(', ')}),'Aura to nearby posts'),h('div',null,h('b',{text:T.aura.r+'u'}),'Reach'),h('div',null,h('b',{text:T.aura.dmg?'Force multiplier':T.aura.rate?'Faster volleys':'Longer sightlines'}),'Role')]
     :[h('div',null,h('b',{text:'+'+tInc(type,lvl,V.w,t[9]||0)+' scrap'}),'Pays at each wave clear'),h('div',null,h('b',{text:uc==null?'Max level':'+'+tInc(type,lvl+1,V.w,t[9]||0)+' scrap'}),'If upgraded'),h('div',null,h('b',{text:'Only you'}),'Who collects it')])),
-  h('div',{class:'row'},h('button',{class:'btn primary',disabled:uc==null||V.g<uc,onclick:()=>{request('up',{slot:i});PL.act=.6},text:uc==null?'Max level':'Upgrade · '+uc+' (U)'}),h('button',{class:'btn danger',onclick:()=>{request('sell',{slot:i});closeSide()},text:'Dismiss +'+Math.floor(spent*.7)+' (X)'})),
+  h('div',{class:'row'},h('button',{class:'btn primary',disabled:uc==null||V.g<uc,onclick:()=>{request('up',{slot:i});PL.act=.6},text:uc==null?'Max level':'Upgrade · '+uc+' (U)'}),
+   // The Rover is the one post you can drive somewhere else, so it gets a park button where the others just get dismiss.
+   ...(T.mov?[h('button',{class:'btn',onclick:()=>startMove(i,V),text:'Redeploy (M)'})]:[]),h('button',{class:'btn danger',onclick:()=>{request('sell',{slot:i});closeSide()},text:'Dismiss +'+Math.floor(spent*.7)+' (X)'})),
   h('button',{class:'btn',onclick:closeSide,text:'Close'}))}
 $('#waveBtn').onclick=()=>request('call');
 $('#waveAuto').onclick=()=>{const V=currentView();const want=!(V&&V.as);if(!S.rm||!(S.rm.isHost||S.admin)){toast('Only the host or an admin can change auto skip.');return}
@@ -1874,6 +2031,8 @@ $('#buildBtn').onclick=()=>{if(PLACE)cancelPlace();openSide()};
 let PLACE=null;const ghostOk=new THREE.MeshBasicMaterial({color:0x8ad04a,transparent:true,opacity:.45,depthWrite:false}),ghostBad=new THREE.MeshBasicMaterial({color:0xd0402a,transparent:true,opacity:.45,depthWrite:false});
 const mouseNDC=new THREE.Vector2(0,0);document.addEventListener('mousemove',e=>{mouseNDC.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1)});
 function viewTowers(V){return V?V.t.filter(Boolean).map(t=>({x:t[6],z:t[7]})):[]}
+// The snapshot keeps empty slots, so tower order has to survive if a move is going to exclude the post being moved.
+function viewTowersIdx(V){return V?V.t.map((t,i)=>t?{x:t[6],z:t[7],i}:null).filter(Boolean):[]}
 function startPlace(k){if(!k||!ownedTypes().includes(k))return;const V=currentView();if(!V||V.st!=='play')return;if(V.g<TOWERS[k].cost){toast('Not enough scrap for a '+TOWERS[k].name+'.');return}
  cancelPlace();closeSide();const m=buildTowerMesh(k,1);m.g.traverse(o=>{if(o.isMesh){o.castShadow=false;o.receiveShadow=false;if(o!==m.ring&&o!==m.fill)o.material=ghostOk}});m.ring.visible=true;m.fill.visible=true;scene.add(m.g);
  PLACE={type:k,m,x:PL.x,z:PL.z,why:null};if(!document.pointerLockElement)toast('Aim at open ground and click to deploy. Esc cancels.');updateLockHint()}
@@ -1883,9 +2042,13 @@ function updatePlace(V){if(!PLACE)return;camera.updateMatrixWorld();_pr.setFromC
  if(d.y<-.02){const t=-o.y/d.y;x=o.x+d.x*t;z=o.z+d.z*t}
  const rh=_pr.intersectObjects(ROOFMESH,false)[0];if(rh){x=rh.point.x;z=rh.point.z}
  if(x==null||Math.hypot(x-PL.x,z-PL.z)>18){x=PL.x+Math.sin(PL.face)*3.5;z=PL.z+Math.cos(PL.face)*3.5}
- PLACE.x=x;PLACE.z=z;PLACE.why=canPlace(x,z,viewTowers(V));if(!PLACE.why&&V&&V.g<TOWERS[PLACE.type].cost)PLACE.why='Not enough scrap';
+ PLACE.x=x;PLACE.z=z;const arr=viewTowersIdx(V);const sk=PLACE.slot!=null?arr.find(o=>o.i===PLACE.slot):null;PLACE.why=canPlace(x,z,arr,sk);if(PLACE.slot==null&&!PLACE.why&&V&&V.g<TOWERS[PLACE.type].cost)PLACE.why='Not enough scrap';
  PLACE.m.g.position.set(x,PAD_Y+placeHeight(x,z),z);PLACE.roof=placeHeight(x,z)>0;const mat=PLACE.why?ghostBad:ghostOk;PLACE.m.g.traverse(q=>{if(q.isMesh&&q!==PLACE.m.ring&&q!==PLACE.m.fill)q.material=mat});PLACE.m.ring.material.color.setHex(PLACE.why?0xd0402a:0x8ad04a)}
-function confirmPlace(){if(!PLACE)return;justPlaced=!document.pointerLockElement;if(PLACE.why){toast(PLACE.why+'.');return}request('build',{type:PLACE.type,x:+PLACE.x.toFixed(2),z:+PLACE.z.toFixed(2),st:starsOf(PLACE.type)});PL.act=.6;cancelPlace()}
+function confirmPlace(){if(!PLACE)return;justPlaced=!document.pointerLockElement;if(PLACE.why){toast(PLACE.why+'.');return}const mv=PLACE.slot!=null;
+ request(mv?'move':'build',mv?{slot:PLACE.slot,x:+PLACE.x.toFixed(2),z:+PLACE.z.toFixed(2)}:{type:PLACE.type,x:+PLACE.x.toFixed(2),z:+PLACE.z.toFixed(2),st:starsOf(PLACE.type)});PL.act=.6;cancelPlace()}
+function startMove(slot,V){const t=V&&V.t[slot];if(!t)return;const type=TKEYS[t[0]];if(!TOWERS[type].mov)return;
+ cancelPlace();closeSide();const m=buildTowerMesh(type,t[1]);m.g.traverse(o=>{if(o.isMesh){o.castShadow=false;o.receiveShadow=false;if(o!==m.ring&&o!==m.fill)o.material=ghostOk}});m.ring.visible=true;m.fill.visible=true;scene.add(m.g);
+ PLACE={type,m,x:t[6],z:t[7],why:null,slot};toast('Aim at open ground and click to park the Rover there.');updateLockHint()}
 
 /* ============ game enter / exit / end / rewards ============ */
 function resetPlayer(){PL.x=PSPAWN.x+rnd(-1,1);PL.z=PSPAWN.z+rnd(-1,1);PL.y=0;PL.vy=0;PL.camA=PSPAWN.a;PL.camP=.45;PL.camD=settings.dist;PL.face=PSPAWN.a+Math.PI;PL.onGround=true}
@@ -1950,7 +2113,8 @@ window.addEventListener('keydown',e=>{if(isTyping())return;
  const qk=/^Digit[1-9]$/.test(e.code)?buildList()[+e.code.slice(5)-1]:null;if(qk&&V&&V.st==='play'){startPlace(qk);return}
  if(e.code==='KeyG'&&V&&V.ph===1)request('call');
  if(PL.near>=0&&V&&V.st==='play'){const t=V.t[PL.near];
-  if(t&&e.code==='KeyU'){request('up',{slot:PL.near});PL.act=.6}if(t&&e.code==='KeyX'){request('sell',{slot:PL.near});closeSide()}}});
+  if(t&&e.code==='KeyU'){request('up',{slot:PL.near});PL.act=.6}if(t&&e.code==='KeyX'){request('sell',{slot:PL.near});closeSide()}
+  if(t&&e.code==='KeyM'&&TOWERS[TKEYS[t[0]]].mov)startMove(PL.near,currentView())}});
 window.addEventListener('keyup',e=>down.delete(e.code));
 window.addEventListener('blur',()=>down.clear());
 
