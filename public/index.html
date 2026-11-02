@@ -657,7 +657,10 @@ function groundDecal(x,z,r,par,y){if(!MAPG&&!par)return;
 
 function initGL(){const cv=$('#gl');renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,powerPreference:'high-performance'});
  renderer.outputEncoding=THREE.sRGBEncoding;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.0;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
- camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,.1,500);scene=new THREE.Scene();buildGlobal();buildFx();loadMap('camp');applyQuality();resizeGL()}
+ // A .1 near plane against a 500-unit far plane throws away almost all depth precision, which is why thin
+ // floor-laid strips z-fight once they are more than a few dozen units away. The camera never gets closer
+ // than the 1.1-unit collision floor, so this costs nothing and buys back precision everywhere.
+ camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,.22,500);scene=new THREE.Scene();buildGlobal();buildFx();loadMap('camp');applyQuality();resizeGL()}
 function applyQuality(){if(!renderer)return;const hi=settings.quality!=='low';renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,hi?1.5:1));renderer.shadowMap.enabled=hi;scene.traverse(o=>{if(o.material)(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.needsUpdate=true)});resizeGL()}
 function resizeGL(){if(!renderer)return;renderer.setSize(innerWidth,innerHeight,false);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix()}
 
@@ -1024,8 +1027,9 @@ function rallyPad(sc,x,z,ry){const g=new THREE.Group();g.position.set(x,0,z);g.r
 
 function buildCamp(sc,rng){scene.fog.color.setHex(0x1b2c34);PSPAWN.x=0;PSPAWN.z=12;PSPAWN.a=0;BASE.x=BASE.z=-1e3;
  mesh(sc,new THREE.PlaneGeometry(150,150),M('permacr',{rep:[19,19]}),0,0,0,{cast:false}).rotation.x=-Math.PI/2;
- // lit seam grid across the plaza floor
- for(let i=-6;i<=6;i++){neonStrip(sc,i*9,0,116,Math.PI/2,'#2f8e9e',.03,.02,.5);neonStrip(sc,0,i*9,116,0,'#2f8e9e',.03,.02,.5)}
+ // lit seam grid across the plaza floor - the two directions sit at different heights so the 169 crossings
+ // do not fight each other, and both clear the plaza by enough to survive the depth buffer at range
+ for(let i=-6;i<=6;i++){neonStrip(sc,i*9,0,116,Math.PI/2,'#2f8e9e',.12,.02,.5);neonStrip(sc,0,i*9,116,0,'#2f8e9e',.15,.02,.5)}
  // energy perimeter
  {const half=58,span=new THREE.MeshBasicMaterial({map:tex('fence',6,1),transparent:true,opacity:.35,depthWrite:false,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,color:0x35d6e8});
   const run=(x0,z0,x1,z1)=>{const n=17;for(let i=0;i<=n;i++){const t=i/n,x=x0+(x1-x0)*t,z=z0+(z1-z0)*t;

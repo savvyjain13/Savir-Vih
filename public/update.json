@@ -1,4 +1,4 @@
 {
-  "at": "2026-11-01T14:05:00Z",
-  "note": "v1.1 parts 4 and 5: the camp is three times the size it was, so there is room to spread out before you deploy. Every map got a graphics pass - contact shadows under props and defenders, bloom on the lamps, a vignette, and the SWAT Rover finally reads as a police van"
+  "at": "2026-11-02T08:45:00Z",
+  "note": "v1.1.6: the camp floor stops shimmering while you walk - the lit seam lines were fighting the plaza for depth, so they now sit clear of it and the camera keeps its depth precision at range"
 }
