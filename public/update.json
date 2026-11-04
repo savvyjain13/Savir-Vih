@@ -1,4 +1,4 @@
 {
-  "at": "2026-11-02T08:45:00Z",
-  "note": "v1.1.6: the camp floor stops shimmering while you walk - the lit seam lines were fighting the plaza for depth, so they now sit clear of it and the camera keeps its depth precision at range"
+  "at": "2026-11-04T05:35:00Z",
+  "note": "v1.1.7: another pass at the camp floor - every texture now samples at the hardware's full anisotropy instead of 4, which is what fixes the crawling grain you see on a big flat floor at a shallow angle"
 }

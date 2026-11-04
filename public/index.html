@@ -404,7 +404,9 @@ function validateName(v){v=String(v||'').trim();if(!v)return 'Enter a username.'
  if(!/^[A-Za-z0-9_.\-]+$/.test(v))return 'Use only letters, numbers, underscore, dot or dash. No spaces.';if(!/[A-Za-z0-9]/.test(v))return 'Include at least one letter or number.';
  if(/^[.\-_]|[.\-_]$/.test(v))return 'Start and end with a letter or number.';
  const low=v.toLowerCase();if(RESERVED.includes(low))return 'That name is reserved. Pick another.';if(!nameIsClean(v)||!nameIsClean(v.replace(/[_.\-]/g,'')))return 'That name is not allowed. Pick another.';return null}
-function canvasTex(w,hh,draw){const c=document.createElement('canvas');c.width=w;c.height=hh;draw(c.getContext('2d'),w,hh);const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;t.anisotropy=4;return t}
+/* The camp is one enormous flat floor seen at a very shallow angle, and a 256px tile stretched over ~8 units
+   aliases badly there. Anisotropy 4 was the old guess; the hardware ceiling is free on everything we run on. */
+function canvasTex(w,hh,draw){const c=document.createElement('canvas');c.width=w;c.height=hh;draw(c.getContext('2d'),w,hh);const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;t.anisotropy=renderer?Math.min(16,renderer.capabilities.getMaxAnisotropy()):4;return t}
 function speckle(x,w,hh,n,col,a){x.fillStyle=col;x.globalAlpha=a;for(let i=0;i<n;i++){x.fillRect(Math.random()*w,Math.random()*hh,1+Math.random()*2,1+Math.random()*2)}x.globalAlpha=1}
 const GEO={};
 function geo(k){if(GEO[k])return GEO[k];const m={torso:()=>new THREE.CylinderGeometry(.26,.3,.62,10),hips:()=>new THREE.BoxGeometry(.46,.22,.26),leg:()=>new THREE.BoxGeometry(.17,.72,.2),arm:()=>new THREE.BoxGeometry(.13,.58,.14),helmet:()=>new THREE.SphereGeometry(.25,16,10,0,Math.PI*2,0,Math.PI*.6),head:()=>new THREE.SphereGeometry(.21,16,12),gun:()=>new THREE.BoxGeometry(.08,.11,.55),barrel:()=>new THREE.CylinderGeometry(.02,.02,.25,8),antenna:()=>new THREE.CylinderGeometry(.015,.015,.3,6),ball:()=>new THREE.SphereGeometry(.05,8,6),pad:()=>new THREE.BoxGeometry(.2,.12,.26),boot:()=>new THREE.BoxGeometry(.19,.12,.3),bhead:()=>new THREE.BoxGeometry(.4,.34,.36)};GEO[k]=m[k]();return GEO[k]}
